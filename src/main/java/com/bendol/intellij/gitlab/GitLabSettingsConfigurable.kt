@@ -1,5 +1,8 @@
 package com.bendol.intellij.gitlab
 
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.reflect.TypeToken
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.Configurable
 import com.intellij.ui.JBColor
@@ -10,15 +13,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.Component
 import java.awt.Dimension
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
-import java.awt.Insets
 import javax.swing.BorderFactory
 import javax.swing.Box
+import javax.swing.BoxLayout
 import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.JScrollPane
+import javax.swing.JTextArea
 import javax.swing.JTextField
 
 class GitLabSettingsConfigurable : Configurable {
@@ -30,105 +33,109 @@ class GitLabSettingsConfigurable : Configurable {
     private var debugCheckBox: JCheckBox? = null
     private var apiUrlField: JTextField? = null
     private var groupNameField: JTextField? = null
+    private var cacheRefreshField: JTextField? = null
+    private var refreshRateField: JTextField? = null
+    private var ignoredGroupsField: JTextField? = null
+    private var branchesField: JTextArea? = null
     private var useEnvVarCheckBox: JCheckBox? = null
+
+    private val gson: Gson = GsonBuilder()
+        .setPrettyPrinting()
+        .create()
 
     override fun getDisplayName(): String = "GitLab Pipelines"
 
     override fun createComponent(): JComponent {
         if (panel == null) {
-            val layout = GridBagLayout().apply {
-                columnWidths = intArrayOf(150, 300)
-            }
-            panel = JPanel(layout).apply {
+            panel = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
-                alignmentY = JComponent.TOP_ALIGNMENT
-                alignmentX = JComponent.LEFT_ALIGNMENT
+                alignmentX = Component.LEFT_ALIGNMENT
             }
 
-            val gbc = GridBagConstraints().apply {
-                anchor = GridBagConstraints.WEST
-                fill = GridBagConstraints.HORIZONTAL
-                insets = Insets(5, 5, 5, 5)
-                weightx = 1.0
-                weighty = 0.0
+            // Helper function to create labeled fields
+            fun addLabeledField(labelText: String, field: JComponent) {
+                val label = JLabel(labelText).apply {
+                    foreground = JBColor.foreground()
+                    alignmentX = Component.LEFT_ALIGNMENT
+                }
+                panel?.add(label)
+                panel?.add(field.apply {
+                    maximumSize = Dimension(Integer.MAX_VALUE, preferredSize.height)
+                    alignmentX = Component.LEFT_ALIGNMENT
+                })
+                panel?.add(Box.createRigidArea(Dimension(0, 10))) // Adds vertical spacing
             }
-
-            var row = 0
 
             // GitLab API URL
-            gbc.gridx = 0
-            gbc.gridy = row
-            gbc.gridwidth = 1
-            panel?.add(JLabel("GitLab API URL:"), gbc)
-
-            gbc.gridx = 1
             apiUrlField = JTextField()
-            apiUrlField?.preferredSize = Dimension(300, 25)
-            panel?.add(apiUrlField, gbc)
-            row++
+            addLabeledField("GitLab API URL:", apiUrlField!!)
 
             // Group Name
-            gbc.gridx = 0
-            gbc.gridy = row
-            panel?.add(JLabel("Group Name:"), gbc)
-
-            gbc.gridx = 1
             groupNameField = JTextField()
-            panel?.add(groupNameField, gbc)
-            row++
+            addLabeledField("Group Name:", groupNameField!!)
 
-            // Token
-            gbc.gridx = 0
-            gbc.gridy = row
-            panel?.add(JLabel("GitLab Personal Access Token:"), gbc)
+            // Cache Refresh Seconds
+            cacheRefreshField = JTextField()
+            addLabeledField("Cache Refresh (seconds):", cacheRefreshField!!)
 
-            gbc.gridx = 1
-            tokenField = JBPasswordField()
-            panel?.add(tokenField, gbc)
-            row++
+            // Refresh Rate Seconds
+            refreshRateField = JTextField()
+            addLabeledField("Refresh Rate (seconds):", refreshRateField!!)
+
+            // Ignored Groups (comma-separated)
+            ignoredGroupsField = JTextField()
+            addLabeledField("Ignored Groups (comma-separated):", ignoredGroupsField!!)
+
+            // Branches (JSON input)
+            branchesField = JTextArea(9, 30).apply {
+                lineWrap = true
+                wrapStyleWord = true
+            }
+            val branchesScrollPane = JScrollPane(branchesField).apply {
+                maximumSize = Dimension(Integer.MAX_VALUE, 300)
+            }
+            addLabeledField("Branches { \"Group Id\": [ <branches in order of preference> ] }:", branchesScrollPane)
 
             // Use Environment Variable Checkbox
-            gbc.gridx = 0
-            gbc.gridy = row
-            gbc.gridwidth = 2 // Span both columns
-            useEnvVarCheckBox = JCheckBox("Use Environment Variable for Token")
-            useEnvVarCheckBox?.alignmentX = Component.LEFT_ALIGNMENT
-            panel?.add(useEnvVarCheckBox, gbc)
-            row++
+            useEnvVarCheckBox = JCheckBox("Use Environment Variable for Token").apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+            panel?.add(useEnvVarCheckBox)
+            panel?.add(Box.createRigidArea(Dimension(0, 10)))
 
             // Debug Checkbox
-            gbc.gridy = row
-            debugCheckBox = JCheckBox("Enable Debug Logging")
-            debugCheckBox?.alignmentX = Component.LEFT_ALIGNMENT
-            panel?.add(debugCheckBox, gbc)
-            row++
+            debugCheckBox = JCheckBox("Enable Debug Logging").apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+            panel?.add(debugCheckBox)
+            panel?.add(Box.createRigidArea(Dimension(0, 10)))
 
             // Info Label
-            gbc.gridy = row
             val infoLabel = JLabel(
                 "<html><i>The GitLab token can also be set via the <b>GITLAB_TOKEN</b> environment variable.</i></html>"
-            )
-            infoLabel.foreground = JBColor.GRAY
-            panel?.add(infoLabel, gbc)
-            row++
+            ).apply {
+                foreground = JBColor.GRAY
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+            panel?.add(infoLabel)
+            panel?.add(Box.createVerticalGlue()) // Pushes everything up
 
-            // Filler to push components to the top
-            gbc.gridy = row
-            gbc.weighty = 1.0 // Take up remaining vertical space
-            gbc.fill = GridBagConstraints.VERTICAL
-            panel?.add(Box.createVerticalGlue(), gbc)
+            // Load settings
+            val settings = GitLabSettingsState.getInstance().state
+            apiUrlField?.text = settings.gitlabApiUrl
+            groupNameField?.text = settings.groupName
+            cacheRefreshField?.text = settings.cacheRefreshSeconds.toString()
+            refreshRateField?.text = settings.refreshRateSeconds.toString()
+            ignoredGroupsField?.text = settings.ignoredGroups.joinToString(", ")
+            branchesField?.text = gson.toJson(settings.branches) // Convert Map to JSON string
+            useEnvVarCheckBox?.isSelected = !System.getenv("GITLAB_TOKEN").isNullOrEmpty()
+            debugCheckBox?.isSelected = settings.debugEnabled
         }
-
-        // Load current settings
-        val settings = GitLabSettingsState.getInstance().state
-        apiUrlField?.text = settings.gitlabApiUrl
-        groupNameField?.text = settings.groupName
-        tokenField?.text = GitLabTokenManager.getInstance().getToken() ?: ""
-        useEnvVarCheckBox?.isSelected = System.getenv("GITLAB_TOKEN").isNullOrEmpty().not()
-        debugCheckBox?.isSelected = settings.debugEnabled
 
         return panel!!
     }
+
 
     override fun isModified(): Boolean {
         val settings = GitLabSettingsState.getInstance().state
@@ -146,6 +153,18 @@ class GitLabSettingsConfigurable : Configurable {
         settings.gitlabApiUrl = apiUrlField?.text ?: settings.gitlabApiUrl
         settings.groupName = groupNameField?.text ?: settings.groupName
         settings.debugEnabled = debugCheckBox?.isSelected ?: false
+        settings.cacheRefreshSeconds = cacheRefreshField?.text?.toIntOrNull() ?: settings.cacheRefreshSeconds
+        settings.refreshRateSeconds = refreshRateField?.text?.toIntOrNull() ?: settings.refreshRateSeconds
+
+        if (ignoredGroupsField != null) {
+            settings.ignoredGroups = ignoredGroupsField!!.text.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        }
+
+        try {
+            settings.branches = gson.fromJson(branchesField?.text, object : TypeToken<Map<String, List<String>>>() {}.type)
+        } catch (e: Exception) {
+            Notifier.notifyError("Invalid JSON", "Branches must be in valid JSON format.")
+        }
 
         val useEnvVar = useEnvVarCheckBox?.isSelected ?: false
         if (useEnvVar) {
