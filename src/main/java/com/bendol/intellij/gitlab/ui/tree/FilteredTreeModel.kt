@@ -18,10 +18,10 @@ class FilteredTreeModel(
 
     init {
         originalModel.addTreeModelListener(object : TreeModelListener {
-            override fun treeNodesChanged(e: TreeModelEvent?) { e?.let { notifyListeners(it) } }
-            override fun treeNodesInserted(e: TreeModelEvent?) { e?.let { notifyListeners(it) } }
-            override fun treeNodesRemoved(e: TreeModelEvent?) { e?.let { notifyListeners(it) } }
-            override fun treeStructureChanged(e: TreeModelEvent?) { e?.let { notifyListeners(it) } }
+            override fun treeNodesChanged(e: TreeModelEvent?)       { e?.let { notifyListeners(it) } }
+            override fun treeNodesInserted(e: TreeModelEvent?)      { e?.let { notifyListeners(it) } }
+            override fun treeNodesRemoved(e: TreeModelEvent?)       { e?.let { notifyListeners(it) } }
+            override fun treeStructureChanged(e: TreeModelEvent?)   { e?.let { notifyListeners(it) } }
         })
     }
 

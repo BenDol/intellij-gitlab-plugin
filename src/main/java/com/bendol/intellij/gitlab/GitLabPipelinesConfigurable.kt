@@ -13,7 +13,6 @@ import com.intellij.ui.components.JBPasswordField
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.awt.Component
 import java.awt.Dimension
 import javax.swing.BorderFactory
@@ -190,20 +189,14 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
                     try {
                         val group = client.searchGroup(settings.groupName)
                         if (group != null) {
-                            withContext(Dispatchers.Main) {
-                                GitLabTokenManager.getInstance().setToken(newToken)
-                                Notifier.notifyInfo("Token Valid", "GitLab token is valid and has been saved.")
-                            }
+                            GitLabTokenManager.getInstance().setToken(newToken)
+                            Notifier.notifyInfo("Token Valid", "GitLab token is valid and has been saved.")
                         } else {
-                            withContext(Dispatchers.Main) {
-                                Notifier.notifyError("Invalid Token", "Failed to validate the GitLab token.")
-                            }
+                            Notifier.notifyError("Invalid Token", "Failed to validate the GitLab token.")
                         }
                     } catch (e: Exception) {
                         logger.error("Failed to validate GitLab token", e)
-                        withContext(Dispatchers.Main) {
-                            Notifier.notifyError("Token Validation Error", e.message ?: "Unknown error")
-                        }
+                        Notifier.notifyError("Token Validation Error", e.message ?: "Unknown error")
                     }
                 }
             }

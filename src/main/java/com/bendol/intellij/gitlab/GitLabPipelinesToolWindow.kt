@@ -165,7 +165,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                             }
                             Status.SKIPPED, Status.RUNNING, Status.PENDING -> {
                                 icon = Images.SkippedIcon
-                                foreground = Color.decode("0xcccccc")
+                                foreground = Color.white//Color.decode("0xcccccc")
                             }
                             else -> {
                                 icon = null
@@ -350,8 +350,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 Notifier.notifyInfo(
                     "Environment Variable Detected",
                     "GitLab token loaded from environment variable. Restart the IDE if you update the environment variable.",
-                    project
-                )
+                    project)
             }
         }
 
@@ -413,9 +412,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             } catch (e: Exception) {
                 logger.error("Error loading cache", e)
                 setLoadingText("")
-                withContext(Dispatchers.Main) {
-                    Notifier.notifyError("GitLab Pipelines", "Failed to load cache.", project)
-                }
+                Notifier.notifyError("GitLab Pipelines", "Failed to load cache.", project)
             }
         }
     }
@@ -491,9 +488,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 }
             } catch (e: Exception) {
                 logger.error("Error loading root group", e)
-                withContext(Dispatchers.Main) {
-                    Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
-                }
+                Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
             } finally {
                 setLoadingText("")
             }
@@ -622,9 +617,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 }
             } catch (e: Exception) {
                 logger.error("Error refreshing groups", e)
-                withContext(Dispatchers.Main) {
-                    Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
-                }
+                Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
             } finally {
                 withContext(Dispatchers.Main) {
                     setLoadingText("", makeBaseText = true)
@@ -883,9 +876,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 }
             } catch (e: Exception) {
                 logger.error("Error retrying pipeline", e)
-                withContext(Dispatchers.Main) {
-                    Notifier.notifyError("Retry Pipeline", e.message ?: "Unknown error", project)
-                }
+                Notifier.notifyError("Retry Pipeline", e.message ?: "Unknown error", project)
             }
         }
     }
@@ -909,9 +900,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 }
             } catch (e: Exception) {
                 logger.error("Error creating pipeline", e)
-                withContext(Dispatchers.Main) {
-                    Notifier.notifyError("Create Pipeline", e.message ?: "Unknown error", project)
-                }
+                Notifier.notifyError("Create Pipeline", e.message ?: "Unknown error", project)
             }
         }
     }

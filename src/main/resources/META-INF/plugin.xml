@@ -12,7 +12,7 @@
   <!--<depends>org.jetbrains.plugins.gitlab</depends>-->
 
   <extensions defaultExtensionNs="com.intellij">
-    <notificationGroup id="GitLab Notifications" isLogByDefault="false" displayType="BALLOON" />
+    <notificationGroup id="GitLab Notifications" displayType="BALLOON" />
 
     <toolWindow id="GitLab Pipelines" anchor="right" factoryClass="com.bendol.intellij.gitlab.GitLabPipelinesToolWindow$Factory"/>
 
