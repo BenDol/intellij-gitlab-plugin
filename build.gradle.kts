@@ -26,7 +26,7 @@ java {
 }
 
 intellij {
-  version.set("2024.2")
+  version.set("2024.3")
   type.set("IC") // "IC" for IntelliJ Community, "IU" for Ultimate
   //plugins.set(listOf("org.jetbrains.plugins.gitlab"))
 

@@ -9,7 +9,7 @@ import com.intellij.openapi.project.Project
 
 object Notifier {
     private val NOTIFICATION_GROUP = NotificationGroupManager.getInstance()
-        .getNotificationGroup("GitLab Pipelines Notifications")
+        .getNotificationGroup("GitLab Notifications")
 
     /**
      * Sends an informational notification.

@@ -121,7 +121,6 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
             panel?.add(debugCheckBox)
             panel?.add(Box.createRigidArea(Dimension(0, 10)))
 
-            // Info Label
             val infoLabel = JLabel(
                 "<html><i>The GitLab token can also be set via the <b>GITLAB_TOKEN</b> environment variable.</i></html>"
             ).apply {
@@ -181,12 +180,10 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
         }
 
         if (settings.useEnvVarToken) {
-            // Clear the stored token if using environment variable
             GitLabTokenManager.getInstance().clearToken()
         } else {
             val newToken = String(tokenField?.password ?: CharArray(0))
             if (newToken.isNotBlank()) {
-                // Optional: Validate the token before saving
                 CoroutineScope(Dispatchers.IO).launch {
                     val tokenManager = GitLabTokenManager.getInstance();
                     val client = GitLabClient(tokenManager, settings.gitlabApiUrl)

@@ -7,6 +7,7 @@ import com.bendol.intellij.gitlab.model.Images
 import com.bendol.intellij.gitlab.model.PipelineInfo
 import com.bendol.intellij.gitlab.model.Status
 import com.bendol.intellij.gitlab.model.TreeNodeData
+import com.bendol.intellij.gitlab.ui.tree.FilteredTreeModel
 import com.bendol.intellij.gitlab.util.Notifier
 import com.bendol.intellij.gitlab.util.Utils
 import com.intellij.openapi.components.service
@@ -20,6 +21,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.treeStructure.Tree
+import io.ktor.util.collections.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -54,6 +56,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     val logger: Logger = Logger.getInstance(GitLabPipelinesToolWindow::class.java)
 
     private val treeModel: DefaultTreeModel
+    private val filteredTreeModel: FilteredTreeModel
     private val tree: Tree
     private val refreshButton: JButton = JButton("Refresh")
     private val resetGroupsButton: JButton = JButton("Reset Groups")
@@ -67,11 +70,20 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private var isRefreshing = false
     private var lockLoadingLabel = false
     private var baseLoadingText = ""
+    private val hiddenNodes: MutableSet<String> = ConcurrentSet()
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
-        tree = Tree(treeModel)
+        filteredTreeModel = FilteredTreeModel(treeModel) { node ->
+            val data = node.userObject as? TreeNodeData
+            if (data == null) {
+                true
+            } else {
+                !hiddenNodes.contains(data.id)
+            }
+        }
+        tree = Tree(filteredTreeModel)
         setupUI()
         initialize()
     }
@@ -79,7 +91,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private fun setupUI() {
         tree.isRootVisible = true
         tree.showsRootHandles = true
-        addTreeViewHandlers()
+        loadTreeViewHandlers()
 
         // Input Panel
         /*val inputPanel = JPanel()
@@ -224,7 +236,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         tree.cellRenderer = renderer
     }
 
-    private fun addTreeViewHandlers() {
+    private fun loadTreeViewHandlers() {
         if (isLoaded)
             return
 
@@ -237,6 +249,30 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 } else if (SwingUtilities.isRightMouseButton(e)) {
                     handleTreeRightClick(e!!)
                 }
+            }
+        })
+
+        filteredTreeModel.addTreeModelListener(object : javax.swing.event.TreeModelListener {
+            override fun treeNodesChanged(e: javax.swing.event.TreeModelEvent?) {
+                if (isRefreshing || !isLoaded) {
+                    return
+                }
+                val node = e?.treePath?.lastPathComponent as? DefaultMutableTreeNode ?: return
+                refreshNodes(node, resetStatus = false)
+            }
+
+            override fun treeNodesInserted(e: javax.swing.event.TreeModelEvent?) {
+            }
+
+            override fun treeNodesRemoved(e: javax.swing.event.TreeModelEvent?) {
+            }
+
+            override fun treeStructureChanged(e: javax.swing.event.TreeModelEvent?) {
+                if (isRefreshing || !isLoaded) {
+                    return
+                }
+                val node = e?.treePath?.lastPathComponent as? DefaultMutableTreeNode ?: return
+                refreshNodes(node, resetStatus = false)
             }
         })
 
@@ -369,6 +405,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                         setTreeRootNode(cachedData.treeData)
                         isLoaded = true
                         setLoadingText("")
+                        /*Utils.executeAfterDelay(5, {
+                            filterRepositories(Status.SUCCESS, treeModel.root as DefaultMutableTreeNode)
+                        })*/
                     }
                 }
             } catch (e: Exception) {
@@ -388,10 +427,19 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         refreshNodes(node as DefaultMutableTreeNode)
     }
 
-    private fun refreshNodes(node: DefaultMutableTreeNode, resetStatus: Boolean = false, saveCache: Boolean = true) {
+    private fun refreshNodes(
+        node: DefaultMutableTreeNode,
+        resetStatus: Boolean = false,
+        saveCache: Boolean = true
+    ) {
         try {
             val nodeData = node.userObject as? TreeNodeData
-            if (node.childCount < 1 && nodeData != null && nodeData.isGroup()) {
+            if (nodeData == null) {
+                logger.warn("refreshNodes: Invalid node data.")
+                return
+            }
+
+            if (node.childCount < 1 && nodeData.isGroup()) {
                 nodeData.status = Status.UNKNOWN
                 node.add(DefaultMutableTreeNode("Loading..."))
                 return
@@ -517,9 +565,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 treeModel.reload(node)
 
                 val data = node.userObject as TreeNodeData
-                data.status = Status.SUCCESS
-                if (data.isExpanded) {
-                    tree.expandPath(TreePath(node.path))
+                if (data.isGroup()) {
+                    data.status = Status.SUCCESS
+                    if (data.isExpanded)
+                        tree.expandPath(TreePath(node.path))
                 }
 
                 if (saveCache) {
@@ -591,6 +640,42 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             baseLoadingText = text
 
         loadingLabel.text = text.ifEmpty { baseLoadingText }
+    }
+
+    private fun filterRepositories(status: Status, rootNode: DefaultMutableTreeNode) {
+        CoroutineScope(Dispatchers.Main).launch {
+            for (i in 0..<rootNode.childCount) {
+                val node = rootNode.getChildAt(i) as DefaultMutableTreeNode
+                val data = node.userObject as? TreeNodeData ?: continue
+                if (data.isGroup() && data.isExpanded) {
+                    filterRepositories(status, node)
+                } else if (data.isRepository()) {
+                    if (data.status == status) {
+                        showTreeNode(node)
+                    } else {
+                        hideTreeNode(node)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showTreeNode(node: DefaultMutableTreeNode) {
+        val data = node.userObject as? TreeNodeData
+        if (data != null) {
+            if (hiddenNodes.remove(data.id)) {
+                filteredTreeModel.signalTreeStructureChanged(node.parent as DefaultMutableTreeNode)
+            }
+        }
+    }
+
+    private fun hideTreeNode(node: DefaultMutableTreeNode) {
+        val data = node.userObject as? TreeNodeData
+        if (data != null) {
+            if (hiddenNodes.add(data.id)) {
+                filteredTreeModel.signalTreeStructureChanged(node.parent as DefaultMutableTreeNode)
+            }
+        }
     }
 
     private suspend fun refreshGroupNode(
@@ -688,7 +773,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         if (data.isRepository()) {
             val repoUrl = extractRepositoryUrl(selectedNode)
             repoUrl?.let {
-                java.awt.Desktop.getDesktop().browse(java.net.URI(it))
+                java.awt.Desktop.getDesktop().browse(java.net.URI("$it/-/pipelines/${data.pipelineId}"))
             }
         }
     }
@@ -849,6 +934,11 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
         if (!nodeData.isRepository()) {
             Notifier.notifyWarning("Refresh Repository", "Selected node is not a repository.", project)
+            return
+        }
+
+        if (hiddenNodes.contains(nodeData.id)) {
+            logger.debug("Skipping refresh for hidden node: ${nodeData.name}")
             return
         }
 

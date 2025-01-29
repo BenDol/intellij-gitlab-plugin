@@ -1,6 +1,6 @@
 <idea-plugin>
   <id>com.bedol.intellij.gitlab</id>
-  <name>GitLab Pipelines</name>
+  <name>GitLab Tools</name>
   <version>1.0.0</version>
   <vendor email="dolb90@gmail.com" url="https://www.bendol.me">BenDol</vendor>
 
@@ -9,10 +9,10 @@
   </description>
 
   <depends>com.intellij.modules.platform</depends>
-  <!--depends>org.jetbrains.plugins.yaml</depends-->
+  <!--<depends>org.jetbrains.plugins.gitlab</depends>-->
 
   <extensions defaultExtensionNs="com.intellij">
-    <notificationGroup id="GitLab Pipelines Notifications" isLogByDefault="false" displayType="BALLOON" />
+    <notificationGroup id="GitLab Notifications" isLogByDefault="false" displayType="BALLOON" />
 
     <toolWindow id="GitLab Pipelines" anchor="right" factoryClass="com.bendol.intellij.gitlab.GitLabPipelinesToolWindow$Factory"/>
 
