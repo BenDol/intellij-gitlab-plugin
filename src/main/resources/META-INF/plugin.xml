@@ -17,6 +17,8 @@
     <toolWindow id="GitLab Pipelines" anchor="right" factoryClass="com.bendol.intellij.gitlab.GitLabPipelinesToolWindow$Factory"/>
 
     <!-- Register Configurable -->
-    <applicationConfigurable instance="com.bendol.intellij.gitlab.GitLabSettingsConfigurable" displayName="GitLab Pipelines"/>
+    <applicationConfigurable
+        displayName="GitLab Pipelines"
+        instance="com.bendol.intellij.gitlab.GitLabSettingsConfigurable"/>
   </extensions>
 </idea-plugin>

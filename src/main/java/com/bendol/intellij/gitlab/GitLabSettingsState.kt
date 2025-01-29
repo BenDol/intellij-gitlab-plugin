@@ -18,6 +18,7 @@ class GitLabSettingsState : PersistentStateComponent<GitLabSettingsState.State> 
         var branches: Map<String, List<String>> = mapOf( // Group id as the key and in order of preference
             "4241428" to listOf("2.0-SNAPSHOT", "2.0.0-SNAPSHOT", "1.0-SNAPSHOT", "1.0.0-SNAPSHOT")
         ),
+        var useEnvVarToken: Boolean = true,
         var debugEnabled: Boolean = false
     )
 

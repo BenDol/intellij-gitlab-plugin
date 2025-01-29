@@ -5,6 +5,8 @@ import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBPasswordField
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +40,9 @@ class GitLabSettingsConfigurable : Configurable {
     private var ignoredGroupsField: JTextField? = null
     private var branchesField: JTextArea? = null
     private var useEnvVarCheckBox: JCheckBox? = null
+
+    private val project: Project?
+        get() = ProjectManager.getInstance().openProjects.firstOrNull()
 
     private val gson: Gson = GsonBuilder()
         .setPrettyPrinting()
@@ -74,6 +79,9 @@ class GitLabSettingsConfigurable : Configurable {
             // Group Name
             groupNameField = JTextField()
             addLabeledField("Group Name:", groupNameField!!)
+
+            tokenField = JBPasswordField()
+            addLabeledField("GitLab Token:", tokenField!!)
 
             // Cache Refresh Seconds
             cacheRefreshField = JTextField()
@@ -129,7 +137,7 @@ class GitLabSettingsConfigurable : Configurable {
             refreshRateField?.text = settings.refreshRateSeconds.toString()
             ignoredGroupsField?.text = settings.ignoredGroups.joinToString(", ")
             branchesField?.text = gson.toJson(settings.branches) // Convert Map to JSON string
-            useEnvVarCheckBox?.isSelected = !System.getenv("GITLAB_TOKEN").isNullOrEmpty()
+            useEnvVarCheckBox?.isSelected = settings.useEnvVarToken
             debugCheckBox?.isSelected = settings.debugEnabled
         }
 
@@ -140,12 +148,15 @@ class GitLabSettingsConfigurable : Configurable {
     override fun isModified(): Boolean {
         val settings = GitLabSettingsState.getInstance().state
         val currentToken = GitLabTokenManager.getInstance().getToken()
-        val envVarSet = System.getenv("GITLAB_TOKEN").isNullOrEmpty().not()
         return apiUrlField?.text != settings.gitlabApiUrl ||
-                groupNameField?.text != settings.groupName ||
-                String(tokenField?.password ?: CharArray(0)) != currentToken ||
-                debugCheckBox?.isSelected != settings.debugEnabled ||
-                useEnvVarCheckBox?.isSelected != envVarSet
+               groupNameField?.text != settings.groupName ||
+               String(tokenField?.password ?: CharArray(0)) != currentToken ||
+               debugCheckBox?.isSelected != settings.debugEnabled ||
+               useEnvVarCheckBox?.isSelected != settings.useEnvVarToken ||
+               cacheRefreshField?.text?.toIntOrNull() != settings.cacheRefreshSeconds ||
+               refreshRateField?.text?.toIntOrNull() != settings.refreshRateSeconds ||
+               ignoredGroupsField?.text != settings.ignoredGroups.joinToString(", ") ||
+               gson.toJson(settings.branches) != branchesField?.text
     }
 
     override fun apply() {
@@ -155,6 +166,7 @@ class GitLabSettingsConfigurable : Configurable {
         settings.debugEnabled = debugCheckBox?.isSelected ?: false
         settings.cacheRefreshSeconds = cacheRefreshField?.text?.toIntOrNull() ?: settings.cacheRefreshSeconds
         settings.refreshRateSeconds = refreshRateField?.text?.toIntOrNull() ?: settings.refreshRateSeconds
+        settings.useEnvVarToken = useEnvVarCheckBox?.isSelected ?: true
 
         if (ignoredGroupsField != null) {
             settings.ignoredGroups = ignoredGroupsField!!.text.split(",").map { it.trim() }.filter { it.isNotEmpty() }
@@ -166,8 +178,7 @@ class GitLabSettingsConfigurable : Configurable {
             Notifier.notifyError("Invalid JSON", "Branches must be in valid JSON format.")
         }
 
-        val useEnvVar = useEnvVarCheckBox?.isSelected ?: false
-        if (useEnvVar) {
+        if (settings.useEnvVarToken) {
             // Clear the stored token if using environment variable
             GitLabTokenManager.getInstance().clearToken()
         } else {
@@ -175,7 +186,8 @@ class GitLabSettingsConfigurable : Configurable {
             if (newToken.isNotBlank()) {
                 // Optional: Validate the token before saving
                 CoroutineScope(Dispatchers.IO).launch {
-                    val client = GitLabClient(newToken, settings.gitlabApiUrl)
+                    val tokenManager = GitLabTokenManager.getInstance();
+                    val client = GitLabClient(tokenManager, settings.gitlabApiUrl)
                     try {
                         val group = client.searchGroup(settings.groupName)
                         if (group != null) {
@@ -205,6 +217,20 @@ class GitLabSettingsConfigurable : Configurable {
         groupNameField?.text = settings.groupName
         tokenField?.text = GitLabTokenManager.getInstance().getToken() ?: ""
         debugCheckBox?.isSelected = settings.debugEnabled
+        useEnvVarCheckBox?.isSelected = settings.useEnvVarToken
+    }
+
+    override fun disposeUIResources() {
+        panel = null
+        tokenField = null
+        debugCheckBox = null
+        apiUrlField = null
+        groupNameField = null
+        cacheRefreshField = null
+        refreshRateField = null
+        ignoredGroupsField = null
+        branchesField = null
+        useEnvVarCheckBox = null
     }
 
     override fun getHelpTopic(): String? = null

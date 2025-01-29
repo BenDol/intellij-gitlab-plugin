@@ -19,16 +19,18 @@ class GitLabTokenManager {
      * If not present, retrieves from the secure store.
      */
     fun getToken(): String? {
-        // Attempt to load from environment variable
-        val envToken = System.getenv("GITLAB_TOKEN")
-        if (!envToken.isNullOrEmpty()) {
-            return envToken
+        val settings = GitLabSettingsState.getInstance().state
+        if (settings.useEnvVarToken) {
+            val envToken = System.getenv("GITLAB_TOKEN")
+            if (!envToken.isNullOrEmpty()) {
+                return envToken
+            }
+            return null
+        } else {
+            val attributes = CredentialAttributes("GitLabPipelinesPlugin", "GitLabToken")
+            val credentials = PasswordSafe.instance.get(attributes)
+            return credentials?.getPasswordAsString()
         }
-
-        // If not in environment, retrieve from Credential Store
-        val attributes = CredentialAttributes("GitLabPipelinesPlugin", "GitLabToken")
-        val credentials = PasswordSafe.instance.get(attributes)
-        return credentials?.getPasswordAsString()
     }
 
     /**

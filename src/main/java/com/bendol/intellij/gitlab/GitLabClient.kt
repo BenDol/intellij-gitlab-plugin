@@ -9,7 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-class GitLabClient(private val token: String, private val apiUrl: String = "https://gitlab.com/api/v4") {
+class GitLabClient(private val tokenManager: GitLabTokenManager, private val apiUrl: String = "https://gitlab.com/api/v4") {
     private val client = OkHttpClient()
     private val gson = GsonBuilder()
         .registerTypeAdapter(Status::class.java, StatusDeserializer())
@@ -25,7 +25,7 @@ class GitLabClient(private val token: String, private val apiUrl: String = "http
 
         return Request.Builder()
             .url(urlBuilder.build())
-            .addHeader("Private-Token", token)
+            .addHeader("Private-Token", tokenManager.getToken()!!)
             .build()
     }
 
@@ -85,7 +85,7 @@ class GitLabClient(private val token: String, private val apiUrl: String = "http
         val request = Request.Builder()
             .url(url)
             .post("".toRequestBody("application/json".toMediaTypeOrNull()))
-            .addHeader("Private-Token", token)
+            .addHeader("Private-Token", tokenManager.getToken()!!)
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("Failed to retry pipeline: $response")
@@ -100,7 +100,7 @@ class GitLabClient(private val token: String, private val apiUrl: String = "http
         val request = Request.Builder()
             .url(url)
             .post(body)
-            .addHeader("Private-Token", token)
+            .addHeader("Private-Token", tokenManager.getToken()!!)
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("Failed to create pipeline: $response")

@@ -2,6 +2,7 @@ package com.bendol.intellij.gitlab
 
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.wm.ToolWindow
@@ -266,24 +267,45 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         })
     }
 
-    private fun initialize() {
+    private fun initialize(retry: Boolean = false) {
         Utils.debugEnabled = settings.debugEnabled
 
         // Initialize GitLab Client
-        val token = GitLabTokenManager.getInstance().getToken() ?: run {
-            Notifier.notifyWarning(
-                "GitLab Token Missing",
-                "Please provide a GitLab Personal Access Token in the settings.",
-                project)
-            ""
+        val tokenManager = GitLabTokenManager.getInstance();
+        val token = tokenManager.getToken()
+        if (token.isNullOrEmpty()) {
+            if (!retry) {
+                Notifier.notifyWarning(
+                    title = "GitLab Token Missing",
+                    message = "Please provide a GitLab Personal Access Token in the settings",
+                    project = project,
+                    actions = mapOf(Pair("Settings") {
+                        ShowSettingsUtil.getInstance().showSettingsDialog(
+                            project,
+                            "GitLab Pipelines"
+                        )
+                    })
+                )
+            }
+
+            // try reinit in 5 seconds
+            Utils.executeAfterDelay(5) {
+                initialize(true)
+            }
+            return
         }
-        gitLabClient = GitLabClient(token, settings.gitlabApiUrl)
+        gitLabClient = GitLabClient(tokenManager, settings.gitlabApiUrl)
 
         // Notify user to restart if environment variable is set
-        val envToken = System.getenv("GITLAB_TOKEN")
-        if (!envToken.isNullOrEmpty()) {
-            Notifier.notifyInfo("Environment Variable Detected",
-                "GitLab token loaded from environment variable. Restart the IDE if you update the environment variable.", project)
+        if (settings.useEnvVarToken) {
+            val envToken = System.getenv("GITLAB_TOKEN")
+            if (!envToken.isNullOrEmpty()) {
+                Notifier.notifyInfo(
+                    "Environment Variable Detected",
+                    "GitLab token loaded from environment variable. Restart the IDE if you update the environment variable.",
+                    project
+                )
+            }
         }
 
         // Load tree from cache or fetch from API
@@ -579,6 +601,24 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private suspend fun refreshGroupNode(node: DefaultMutableTreeNode, saveCache: Boolean = true) {
         isRefreshing = true
 
+        if (node.userObject !is TreeNodeData) {
+            return
+        }
+
+        val data = node.userObject as? TreeNodeData
+        if ((data == null || (data.isGroup() && data.isStatusUnknown())) && node.childCount < 2) {
+            val groupName = data?.name ?: extractGroupName(node)
+            val group = gitLabClient.searchGroup(groupName)
+            if (group != null) {
+                loadSubgroupsAndRepositories(node, group.id, false)
+                refreshGroupNode(node, saveCache = saveCache)
+                return
+            } else {
+                loadRootGroup()
+                return
+            }
+        }
+
         for (i in 0..<node.childCount) {
             val child = node.getChildAt(i) as DefaultMutableTreeNode
             if (child.userObject !is TreeNodeData) {
@@ -841,6 +881,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             val toolWindowPanel = GitLabPipelinesToolWindow(project)
             val contentFactory = service<ContentFactory>()
             val content = contentFactory.createContent(toolWindowPanel, "", false)
+            toolWindow.setIcon(Images.ProjectIcon)
             toolWindow.contentManager.addContent(content)
         }
     }
