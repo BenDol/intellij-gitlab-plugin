@@ -1,0 +1,22 @@
+<idea-plugin>
+  <id>com.bedol.intellij.gitlab</id>
+  <name>GitLab Pipelines</name>
+  <version>1.0.0</version>
+  <vendor email="dolb90@gmail.com" url="https://www.bendol.me">BenDol</vendor>
+
+  <description>
+    GitLab action support for IntelliJ IDEA.
+  </description>
+
+  <depends>com.intellij.modules.platform</depends>
+  <!--depends>org.jetbrains.plugins.yaml</depends-->
+
+  <extensions defaultExtensionNs="com.intellij">
+    <notificationGroup id="GitLab Pipelines Notifications" isLogByDefault="false" displayType="BALLOON" />
+
+    <toolWindow id="GitLab Pipelines" anchor="right" factoryClass="com.bendol.intellij.gitlab.GitLabPipelinesToolWindow$Factory"/>
+
+    <!-- Register Configurable -->
+    <applicationConfigurable instance="com.bendol.intellij.gitlab.GitLabSettingsConfigurable" displayName="GitLab Pipelines"/>
+  </extensions>
+</idea-plugin>

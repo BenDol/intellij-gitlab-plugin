@@ -1,0 +1,24 @@
+package com.bendol.intellij.gitlab
+
+enum class Status {
+    CREATED,
+    WAITING_FOR_RESOURCE,
+    PREPARING,
+    PENDING,
+    RUNNING,
+    SUCCESS,
+    FAILED,
+    CANCELED,
+    SKIPPED,
+    MANUAL,
+    SCHEDULED,
+    WAITING_FOR_MANUAL_ACTION,
+    PREPARING_RESOURCES,
+    CREATED_RESOURCE,
+    WAITING_FOR_PICK,
+    BLOCKED,
+    UNBLOCKED,
+    WAITING_FOR_RESOURCE_PICK,
+    ARCHIVED,
+    UNKNOWN
+}
