@@ -8,10 +8,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.awt.Component
 import java.awt.Dimension
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
+import java.awt.Insets
 import javax.swing.BorderFactory
 import javax.swing.Box
-import javax.swing.BoxLayout
 import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -33,49 +36,87 @@ class GitLabSettingsConfigurable : Configurable {
 
     override fun createComponent(): JComponent {
         if (panel == null) {
-            panel = JPanel()
-            panel?.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
-            panel?.border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
+            val layout = GridBagLayout().apply {
+                columnWidths = intArrayOf(150, 300)
+            }
+            panel = JPanel(layout).apply {
+                border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
+                alignmentY = JComponent.TOP_ALIGNMENT
+                alignmentX = JComponent.LEFT_ALIGNMENT
+            }
 
-            panel?.add(JLabel("GitLab API URL:").also {
-                it.foreground = JBColor.foreground()
-            })
+            val gbc = GridBagConstraints().apply {
+                anchor = GridBagConstraints.WEST
+                fill = GridBagConstraints.HORIZONTAL
+                insets = Insets(5, 5, 5, 5)
+                weightx = 1.0
+                weighty = 0.0
+            }
+
+            var row = 0
+
+            // GitLab API URL
+            gbc.gridx = 0
+            gbc.gridy = row
+            gbc.gridwidth = 1
+            panel?.add(JLabel("GitLab API URL:"), gbc)
+
+            gbc.gridx = 1
             apiUrlField = JTextField()
-            apiUrlField?.maximumSize = Dimension(Integer.MAX_VALUE, apiUrlField?.preferredSize?.height ?: 25)
-            panel?.add(apiUrlField)
-            panel?.add(Box.createRigidArea(Dimension(0, 10)))
+            apiUrlField?.preferredSize = Dimension(300, 25)
+            panel?.add(apiUrlField, gbc)
+            row++
 
             // Group Name
-            panel?.add(JLabel("Group Name:").also {
-                it.foreground = JBColor.foreground()
-            })
+            gbc.gridx = 0
+            gbc.gridy = row
+            panel?.add(JLabel("Group Name:"), gbc)
+
+            gbc.gridx = 1
             groupNameField = JTextField()
-            groupNameField?.maximumSize = Dimension(Integer.MAX_VALUE, groupNameField?.preferredSize?.height ?: 25)
-            panel?.add(groupNameField)
-            panel?.add(Box.createRigidArea(Dimension(0, 10)))
+            panel?.add(groupNameField, gbc)
+            row++
 
             // Token
-            panel?.add(JLabel("GitLab Personal Access Token:").also {
-                it.foreground = JBColor.foreground()
-            })
-            tokenField = JBPasswordField()
-            tokenField?.maximumSize = Dimension(Integer.MAX_VALUE, tokenField?.preferredSize?.height ?: 25)
-            panel?.add(tokenField)
-            panel?.add(Box.createRigidArea(Dimension(0, 10)))
+            gbc.gridx = 0
+            gbc.gridy = row
+            panel?.add(JLabel("GitLab Personal Access Token:"), gbc)
 
-            panel?.add(Box.createRigidArea(Dimension(0, 10)))
+            gbc.gridx = 1
+            tokenField = JBPasswordField()
+            panel?.add(tokenField, gbc)
+            row++
+
+            // Use Environment Variable Checkbox
+            gbc.gridx = 0
+            gbc.gridy = row
+            gbc.gridwidth = 2 // Span both columns
             useEnvVarCheckBox = JCheckBox("Use Environment Variable for Token")
-            panel?.add(useEnvVarCheckBox)
+            useEnvVarCheckBox?.alignmentX = Component.LEFT_ALIGNMENT
+            panel?.add(useEnvVarCheckBox, gbc)
+            row++
 
             // Debug Checkbox
+            gbc.gridy = row
             debugCheckBox = JCheckBox("Enable Debug Logging")
-            panel?.add(debugCheckBox)
+            debugCheckBox?.alignmentX = Component.LEFT_ALIGNMENT
+            panel?.add(debugCheckBox, gbc)
+            row++
 
-            // Add a note about the environment variable
-            panel?.add(JLabel("<html><i>The GitLab token can also be set via the <b>GITLAB_TOKEN</b> environment variable.</i></html>").also {
-                it.foreground = JBColor.GRAY
-            })
-            panel?.add(Box.createRigidArea(Dimension(0, 10)))
+            // Info Label
+            gbc.gridy = row
+            val infoLabel = JLabel(
+                "<html><i>The GitLab token can also be set via the <b>GITLAB_TOKEN</b> environment variable.</i></html>"
+            )
+            infoLabel.foreground = JBColor.GRAY
+            panel?.add(infoLabel, gbc)
+            row++
+
+            // Filler to push components to the top
+            gbc.gridy = row
+            gbc.weighty = 1.0 // Take up remaining vertical space
+            gbc.fill = GridBagConstraints.VERTICAL
+            panel?.add(Box.createVerticalGlue(), gbc)
         }
 
         // Load current settings

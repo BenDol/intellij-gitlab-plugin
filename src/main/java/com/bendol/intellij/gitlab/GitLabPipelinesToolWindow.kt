@@ -17,7 +17,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.Color
-import java.awt.Dimension
 import java.awt.Image
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
@@ -72,7 +71,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         addTreeViewHandlers()
 
         // Input Panel
-        val inputPanel = JPanel()
+        /*val inputPanel = JPanel()
         inputPanel.layout = BoxLayout(inputPanel, BoxLayout.X_AXIS)
         inputPanel.border = BorderFactory.createEmptyBorder(5, 5, 5, 5)
         inputPanel.background = JBColor.background()
@@ -82,7 +81,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         inputPanel.add(Box.createRigidArea(Dimension(5, 0)))
         inputPanel.add(refreshButton)
 
-        add(inputPanel)
+        add(inputPanel)*/
 
         // Tree Panel
         val treePanel = JBScrollPane(tree)
@@ -347,7 +346,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     withContext(Dispatchers.Main) {
                         setTreeRootNode(cachedData.treeData)
                         loadingLabel.text = ""
-                        Notifier.notifyInfo("GitLab Pipelines", "Loaded data from cache.", project)
+                        //Notifier.notifyInfo("GitLab Pipelines", "Loaded data from cache.", project)
                         isLoaded = true
                     }
                 }
@@ -532,7 +531,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             return null
         }
 
-        if (nodeData.isGroup()) {
+        if (!nodeData.isGroup()) {
             Notifier.notifyWarning("Extract Group URL", "Selected node is not a group.", project)
             return null
         }
@@ -730,8 +729,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             try {
                 val retriedPipeline = gitLabClient.retryPipeline(projectId, pipeline.id)
                 withContext(Dispatchers.Main) {
-                    Notifier.notifyInfo("Retry Pipeline", "Pipeline ${retriedPipeline?.id} retried successfully.", project)
-                    refreshRepository(node)
+                    Notifier.notifyInfo("Retrying Pipeline", "Pipeline ${data.name}:${retriedPipeline?.id} retried successfully.", project)
+                    Utils.executeAfterDelay(3) {
+                        refreshRepository(node)
+                    }
                 }
             } catch (e: Exception) {
                 logger.error("Error retrying pipeline", e)
@@ -756,7 +757,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             try {
                 val newPipeline = gitLabClient.createPipeline(projectId, "development") // or prompt for ref
                 withContext(Dispatchers.Main) {
-                    Notifier.notifyInfo("Create Pipeline", "Pipeline ${newPipeline?.id} created successfully.", project)
+                    Notifier.notifyInfo("Creating Pipeline", "Pipeline ${data.name}:${newPipeline?.id} created successfully.", project)
                     refreshRepository(node)
                 }
             } catch (e: Exception) {
@@ -798,6 +799,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                         val oldStatus = nodeData.status
                         nodeData.status = pipeline.status
                         nodeData.pipelineId = pipeline.id.toString()
+                        nodeData.displayName = getRepositoryDisplayName(nodeData.name ?: "", pipeline.status)
 
                         // Update the node's display text
                         node.userObject = nodeData
