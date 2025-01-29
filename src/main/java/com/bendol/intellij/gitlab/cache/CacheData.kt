@@ -1,4 +1,4 @@
-package com.bendol.intellij.gitlab
+package com.bendol.intellij.gitlab.cache
 
 import javax.swing.tree.DefaultMutableTreeNode
 

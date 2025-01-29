@@ -1,7 +1,7 @@
 package com.bendol.intellij.gitlab.json
 
-import com.bendol.intellij.gitlab.SerializableTreeNode
-import com.bendol.intellij.gitlab.TreeNodeData
+import com.bendol.intellij.gitlab.model.SerializableTreeNode
+import com.bendol.intellij.gitlab.model.TreeNodeData
 import com.google.gson.JsonElement
 import com.google.gson.JsonSerializationContext
 import com.google.gson.JsonSerializer

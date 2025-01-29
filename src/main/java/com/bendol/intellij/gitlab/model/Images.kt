@@ -1,4 +1,4 @@
-package com.bendol.intellij.gitlab
+package com.bendol.intellij.gitlab.model
 
 import com.intellij.openapi.util.IconLoader
 import javax.swing.Icon

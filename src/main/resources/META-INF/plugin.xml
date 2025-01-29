@@ -5,7 +5,7 @@
   <vendor email="dolb90@gmail.com" url="https://www.bendol.me">BenDol</vendor>
 
   <description>
-    GitLab action support for IntelliJ IDEA.
+    GitLab API general utility plugin for IntelliJ IDEA.
   </description>
 
   <depends>com.intellij.modules.platform</depends>
@@ -16,9 +16,12 @@
 
     <toolWindow id="GitLab Pipelines" anchor="right" factoryClass="com.bendol.intellij.gitlab.GitLabPipelinesToolWindow$Factory"/>
 
-    <!-- Register Configurable -->
     <applicationConfigurable
-        displayName="GitLab Pipelines"
-        instance="com.bendol.intellij.gitlab.GitLabSettingsConfigurable"/>
+        instance="com.bendol.intellij.gitlab.GitLabSettingsConfigurable"
+        displayName="GitLab"/>
+    <applicationConfigurable
+        displayName="Pipelines"
+        instance="com.bendol.intellij.gitlab.GitLabPipelinesConfigurable"
+        groupId="com.bendol.intellij.gitlab.GitLabSettingsConfigurable"/>
   </extensions>
 </idea-plugin>

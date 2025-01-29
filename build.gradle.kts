@@ -28,7 +28,7 @@ java {
 intellij {
   version.set("2024.2")
   type.set("IC") // "IC" for IntelliJ Community, "IU" for Ultimate
-  //plugins.set(listOf("org.jetbrains.plugins.yaml", "com.tang:1.4.14-IDEA242"))
+  //plugins.set(listOf("org.jetbrains.plugins.gitlab"))
 
   pluginsRepositories {
     marketplace()

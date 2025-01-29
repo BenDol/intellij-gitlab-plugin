@@ -1,12 +1,10 @@
-package com.bendol.intellij.gitlab
+package com.bendol.intellij.gitlab.util
 
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 object Utils {
-    var debugEnabled: Boolean = false
-
     private val executor = Executors.newScheduledThreadPool(5)
     private val timers = mutableListOf<ScheduledFuture<*>>()
 

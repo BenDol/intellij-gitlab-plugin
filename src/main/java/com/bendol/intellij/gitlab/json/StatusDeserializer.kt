@@ -1,6 +1,6 @@
 package com.bendol.intellij.gitlab.json
 
-import com.bendol.intellij.gitlab.Status
+import com.bendol.intellij.gitlab.model.Status
 import com.google.gson.JsonDeserializationContext
 import com.google.gson.JsonDeserializer
 import com.google.gson.JsonElement

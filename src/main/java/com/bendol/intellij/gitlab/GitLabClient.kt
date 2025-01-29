@@ -1,6 +1,10 @@
 package com.bendol.intellij.gitlab
 
 import com.bendol.intellij.gitlab.json.StatusDeserializer
+import com.bendol.intellij.gitlab.model.Group
+import com.bendol.intellij.gitlab.model.Pipeline
+import com.bendol.intellij.gitlab.model.Repository
+import com.bendol.intellij.gitlab.model.Status
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -9,7 +13,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-class GitLabClient(private val tokenManager: GitLabTokenManager, private val apiUrl: String = "https://gitlab.com/api/v4") {
+class GitLabClient(
+    private val tokenManager: GitLabTokenManager,
+    private val apiUrl: String = "https://gitlab.com/api/v4"
+) {
     private val client = OkHttpClient()
     private val gson = GsonBuilder()
         .registerTypeAdapter(Status::class.java, StatusDeserializer())
@@ -38,7 +45,9 @@ class GitLabClient(private val tokenManager: GitLabTokenManager, private val api
 
             val listType = object : TypeToken<List<Group>>() {}.type
             val groups: List<Group> = gson.fromJson(response.body?.charStream(), listType)
-            return groups.find { it.name.equals(groupName, ignoreCase = true) || it.path.equals(groupName, ignoreCase = true) }
+            return groups.find {
+                it.name.equals(groupName, ignoreCase = true) || it.path.equals(groupName, ignoreCase = true)
+            }
         }
     }
 

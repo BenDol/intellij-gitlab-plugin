@@ -1,4 +1,4 @@
-package com.bendol.intellij.gitlab
+package com.bendol.intellij.gitlab.model
 
 data class PipelineInfo(
     val projectId: String,

@@ -15,7 +15,8 @@ class GitLabSettingsState : PersistentStateComponent<GitLabSettingsState.State> 
         var cacheRefreshSeconds: Int = 10 * 60, // 10 minutes
         var refreshRateSeconds: Int = 5 * 60,   // 5 minutes
         var ignoredGroups: List<String> = listOf("10926345", "6622675"),
-        var branches: Map<String, List<String>> = mapOf( // Group id as the key and in order of preference
+        var branches: Map<String, List<String>> = mapOf(
+            // Group id as the key and branches in order of preference
             "4241428" to listOf("2.0-SNAPSHOT", "2.0.0-SNAPSHOT", "1.0-SNAPSHOT", "1.0.0-SNAPSHOT")
         ),
         var useEnvVarToken: Boolean = true,

@@ -1,4 +1,4 @@
-package com.bendol.intellij.gitlab
+package com.bendol.intellij.gitlab.util
 
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationGroupManager

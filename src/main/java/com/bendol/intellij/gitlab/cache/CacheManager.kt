@@ -1,4 +1,4 @@
-package com.bendol.intellij.gitlab
+package com.bendol.intellij.gitlab.cache
 
 import com.bendol.intellij.gitlab.json.MutableTreeNodeDeserializer
 import com.bendol.intellij.gitlab.json.MutableTreeNodeSerializer
