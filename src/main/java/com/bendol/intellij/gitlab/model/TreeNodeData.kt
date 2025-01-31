@@ -9,7 +9,8 @@ data class TreeNodeData(
     var pipelineId: String? = null,      // Pipeline ID for repositories
     val name: String? = null,            // Name of the group/repository
     var displayName: String,             // Display name of the group/repository
-    var isExpanded: Boolean = false      // Whether the node is expanded
+    var isExpanded: Boolean = false,     // Whether the node is expanded
+    var filter: Filter = Filter.DEFAULT, // Filter for pipeline status
 ) {
     override fun toString(): String = displayName
 

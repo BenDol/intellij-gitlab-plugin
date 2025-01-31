@@ -5,15 +5,12 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 object Notifier {
-    private val NOTIFICATION_GROUP = NotificationGroupManager.getInstance()
-        .getNotificationGroup("GitLab Notifications")
+    private fun getNotificationGroup() =
+        NotificationGroupManager.getInstance().getNotificationGroup("GitLab Notifications")
 
     /**
      * Sends an informational notification.
@@ -21,8 +18,8 @@ object Notifier {
      * @param message The message content of the notification.
      */
     fun notifyInfo(title: String, message: String, project: Project? = null, actions: Map<String, (() -> Unit)>? = null) {
-        CoroutineScope(Dispatchers.EDT).launch {
-            val notification = NOTIFICATION_GROUP.createNotification(title, message, NotificationType.INFORMATION)
+        ApplicationManager.getApplication().invokeLater {
+            val notification = getNotificationGroup().createNotification(title, message, NotificationType.INFORMATION)
             addActions(notification, actions)
             notification.notify(project)
         }
@@ -34,8 +31,8 @@ object Notifier {
      * @param message The message content of the notification.
      */
     fun notifyWarning(title: String, message: String, project: Project? = null, actions: Map<String, (() -> Unit)>? = null) {
-        CoroutineScope(Dispatchers.EDT).launch {
-            val notification = NOTIFICATION_GROUP.createNotification(title, message, NotificationType.WARNING)
+        ApplicationManager.getApplication().invokeLater {
+            val notification = getNotificationGroup().createNotification(title, message, NotificationType.WARNING)
             addActions(notification, actions)
             notification.notify(project)
         }
@@ -47,8 +44,8 @@ object Notifier {
      * @param message The message content of the notification.
      */
     fun notifyError(title: String, message: String, project: Project? = null, actions: Map<String, (() -> Unit)>? = null) {
-        CoroutineScope(Dispatchers.EDT).launch {
-            val notification = NOTIFICATION_GROUP.createNotification(title, message, NotificationType.ERROR)
+        ApplicationManager.getApplication().invokeLater {
+            val notification = getNotificationGroup().createNotification(title, message, NotificationType.ERROR)
             addActions(notification, actions)
             notification.notify(project)
         }

@@ -2,8 +2,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-  kotlin("jvm") version "2.1.0"
   id("org.jetbrains.intellij") version "1.17.4"
+  kotlin("jvm") version "2.1.0"
 }
 
 group = "com.bendol.intellij.gitlab"

@@ -28,7 +28,7 @@ import javax.swing.JTextField
 
 class GitLabPipelinesConfigurable : SearchableConfigurable {
 
-    val logger: Logger = Logger.getInstance(GitLabPipelinesConfigurable::class.java)
+    private val logger: Logger = Logger.getInstance(GitLabPipelinesConfigurable::class.java)
 
     private var panel: JPanel? = null
     private var tokenField: JBPasswordField? = null
@@ -130,15 +130,7 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
             panel?.add(Box.createVerticalGlue()) // Pushes everything up
 
             // Load settings
-            val settings = GitLabSettingsState.getInstance().state
-            apiUrlField?.text = settings.gitlabApiUrl
-            groupNameField?.text = settings.groupName
-            cacheRefreshField?.text = settings.cacheRefreshSeconds.toString()
-            refreshRateField?.text = settings.refreshRateSeconds.toString()
-            ignoredGroupsField?.text = settings.ignoredGroups.joinToString(", ")
-            branchesField?.text = gson.toJson(settings.branches)
-            useEnvVarCheckBox?.isSelected = settings.useEnvVarToken
-            debugCheckBox?.isSelected = settings.debugEnabled
+            reset()
         }
 
         return panel!!
@@ -208,8 +200,12 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
         apiUrlField?.text = settings.gitlabApiUrl
         groupNameField?.text = settings.groupName
         tokenField?.text = GitLabTokenManager.getInstance().getToken() ?: ""
-        debugCheckBox?.isSelected = settings.debugEnabled
+        cacheRefreshField?.text = settings.cacheRefreshSeconds.toString()
+        refreshRateField?.text = settings.refreshRateSeconds.toString()
+        ignoredGroupsField?.text = settings.ignoredGroups.joinToString(", ")
+        branchesField?.text = gson.toJson(settings.branches)
         useEnvVarCheckBox?.isSelected = settings.useEnvVarToken
+        debugCheckBox?.isSelected = settings.debugEnabled
     }
 
     override fun disposeUIResources() {

@@ -1,6 +1,8 @@
 package com.bendol.intellij.gitlab
 
+import com.bendol.intellij.gitlab.cache.CacheData
 import com.bendol.intellij.gitlab.cache.CacheManager
+import com.bendol.intellij.gitlab.model.Filter
 import com.bendol.intellij.gitlab.model.Group
 import com.bendol.intellij.gitlab.model.GroupType
 import com.bendol.intellij.gitlab.model.Images
@@ -14,6 +16,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
@@ -23,21 +26,25 @@ import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.treeStructure.Tree
 import io.ktor.util.collections.*
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.Color
+import java.awt.Dimension
 import java.awt.Image
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.Icon
 import javax.swing.ImageIcon
-import javax.swing.JButton
 import javax.swing.JLabel
 import javax.swing.JMenuItem
 import javax.swing.JPanel
@@ -50,40 +57,27 @@ import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.MutableTreeNode
 import javax.swing.tree.TreePath
 
-
 class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindowPanel(true, true) {
 
-    val logger: Logger = Logger.getInstance(GitLabPipelinesToolWindow::class.java)
+    private val logger: Logger = Logger.getInstance(GitLabPipelinesToolWindow::class.java)
 
-    private val treeModel: DefaultTreeModel
-    private val filteredTreeModel: FilteredTreeModel
     private val tree: Tree
-    private val refreshButton: JButton = JButton("Refresh")
-    private val resetGroupsButton: JButton = JButton("Reset Groups")
     private val loadingLabel: JLabel = JLabel("")
     private val lastRefreshLabel: JLabel = JLabel("")
+    private val statusComboBox = ComboBox(arrayOf("All", "Success", "Failed", "Skipped", "Running"))
 
     private lateinit var gitLabClient: GitLabClient
-    private val cacheManager = CacheManager()
+    private val cacheManager = CacheManager(project)
     private val settings = GitLabSettingsState.getInstance().state
-    private var isLoaded = false
-    private var isRefreshing = false
-    private var lockLoadingLabel = false
+    private var isRefreshing = AtomicBoolean(false)
+    private var lockLoadingLabel = AtomicBoolean(false)
     private var baseLoadingText = ""
     private val hiddenNodes: MutableSet<String> = ConcurrentSet()
+    private val expandedNodes: MutableSet<String> = ConcurrentSet()
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
-        filteredTreeModel = FilteredTreeModel(treeModel) { node ->
-            val data = node.userObject as? TreeNodeData
-            if (data == null) {
-                true
-            } else {
-                !hiddenNodes.contains(data.id)
-            }
-        }
-        tree = Tree(filteredTreeModel)
+        tree = Tree(DefaultTreeModel(DefaultMutableTreeNode("Loading...")))
         setupUI()
         initialize()
     }
@@ -91,20 +85,18 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private fun setupUI() {
         tree.isRootVisible = true
         tree.showsRootHandles = true
-        loadTreeViewHandlers()
 
         // Input Panel
-        /*val inputPanel = JPanel()
+        val inputPanel = JPanel()
         inputPanel.layout = BoxLayout(inputPanel, BoxLayout.X_AXIS)
         inputPanel.border = BorderFactory.createEmptyBorder(5, 5, 5, 5)
         inputPanel.background = JBColor.background()
 
+        statusComboBox.maximumSize = Dimension(Int.MAX_VALUE, 30)
         inputPanel.add(Box.createRigidArea(Dimension(5, 0)))
-        inputPanel.add(resetGroupsButton)
-        inputPanel.add(Box.createRigidArea(Dimension(5, 0)))
-        inputPanel.add(refreshButton)
+        inputPanel.add(statusComboBox)
 
-        add(inputPanel)*/
+        add(inputPanel)
 
         // Tree Panel
         val treePanel = JBScrollPane(tree)
@@ -120,15 +112,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         statusPanel.add(lastRefreshLabel)
 
         add(statusPanel)
-
-        // Button Actions
-        refreshButton.addActionListener {
-            refreshGroups(notify = true)
-        }
-
-        resetGroupsButton.addActionListener {
-            loadRootGroup()
-        }
 
         @Suppress("UseJBColor")
         val renderer = object : DefaultTreeCellRenderer() {
@@ -237,13 +220,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     }
 
     private fun loadTreeViewHandlers() {
-        if (isLoaded)
-            return
-
         tree.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent?) {
-                if (!isLoaded)
-                    return
                 if (e?.clickCount == 2) {
                     handleTreeDoubleClick()
                 } else if (SwingUtilities.isRightMouseButton(e)) {
@@ -252,54 +230,29 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             }
         })
 
-        filteredTreeModel.addTreeModelListener(object : javax.swing.event.TreeModelListener {
-            override fun treeNodesChanged(e: javax.swing.event.TreeModelEvent?) {
-                if (isRefreshing || !isLoaded) {
-                    return
-                }
-                val node = e?.treePath?.lastPathComponent as? DefaultMutableTreeNode ?: return
-                refreshNodes(node, resetStatus = false)
-            }
-
-            override fun treeNodesInserted(e: javax.swing.event.TreeModelEvent?) {
-            }
-
-            override fun treeNodesRemoved(e: javax.swing.event.TreeModelEvent?) {
-            }
-
-            override fun treeStructureChanged(e: javax.swing.event.TreeModelEvent?) {
-                if (isRefreshing || !isLoaded) {
-                    return
-                }
-                val node = e?.treePath?.lastPathComponent as? DefaultMutableTreeNode ?: return
-                refreshNodes(node, resetStatus = false)
-            }
-        })
-
         tree.addTreeExpansionListener(object : javax.swing.event.TreeExpansionListener {
             override fun treeExpanded(event: javax.swing.event.TreeExpansionEvent?) {
-                if (!isLoaded)
-                    return
                 val node = event?.path?.lastPathComponent as? DefaultMutableTreeNode ?: return
                 val nodeData = node.userObject as? TreeNodeData ?: return
 
                 if (nodeData.isGroup()) {
-                    nodeData.isExpanded = true
+                    setExpanded(nodeData, true)
 
-                    if (nodeData.isStatusUnknown()) {
-                        val prevLoadingLabel = loadingLabel.text
+                    if (!isRefreshing.get() && nodeData.isStatusUnknown()) {
                         setLoadingText("Loading group '${nodeData.name}'...")
                         node.removeAllChildren()
                         CoroutineScope(Dispatchers.IO).launch {
                             loadSubgroupsAndRepositories(node, nodeData.id.toInt())
 
-                            withContext(Dispatchers.Main) {
-                                setLoadingText(prevLoadingLabel)
+                            CoroutineScope(Dispatchers.Main).launch {
+                                setLoadingText("")
                             }
                         }
                     } else {
-                        if (!isRefreshing) {
-                            cacheManager.saveCache(treeModel.root as DefaultMutableTreeNode)
+                        CoroutineScope(Dispatchers.IO).launch {
+                            if (!isRefreshing.get()) {
+                                cacheManager.saveCache(getTreeModel().root as DefaultMutableTreeNode)
+                            }
                         }
                     }
                 }
@@ -309,12 +262,31 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 val node = event?.path?.lastPathComponent as? DefaultMutableTreeNode ?: return
                 val nodeData = node.userObject as? TreeNodeData ?: return
                 if (nodeData.isGroup()) {
-                    nodeData.isExpanded = false
+                    setExpanded(nodeData, false)
                 }
 
-                if (!isRefreshing) {
-                    cacheManager.saveCache(treeModel.root as DefaultMutableTreeNode)
+                CoroutineScope(Dispatchers.IO).launch {
+                    if (!isRefreshing.get()) {
+                        cacheManager.saveCache(getTreeModel().root as DefaultMutableTreeNode)
+                    }
                 }
+            }
+        })
+    }
+
+    private fun loadTreeModelHandlers() {
+        val treeModel = getTreeModel()
+        treeModel.addTreeModelListener(object : javax.swing.event.TreeModelListener {
+            override fun treeNodesChanged(e: javax.swing.event.TreeModelEvent?) {
+            }
+
+            override fun treeNodesInserted(e: javax.swing.event.TreeModelEvent?) {
+            }
+
+            override fun treeNodesRemoved(e: javax.swing.event.TreeModelEvent?) {
+            }
+
+            override fun treeStructureChanged(e: javax.swing.event.TreeModelEvent?) {
             }
         })
     }
@@ -342,11 +314,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             }
             return
         }
-        gitLabClient = GitLabClient(tokenManager, settings.gitlabApiUrl)
+
+        if (!::gitLabClient.isInitialized) {
+            gitLabClient = GitLabClient(tokenManager, settings.gitlabApiUrl)
+        }
 
         if (settings.useEnvVarToken) {
             val envToken = System.getenv("GITLAB_TOKEN")
-            if (!envToken.isNullOrEmpty()) {
+            if (!retry && !envToken.isNullOrEmpty()) {
                 Notifier.notifyInfo(
                     "Environment Variable Detected",
                     "GitLab token loaded from environment variable. Restart the IDE if you update the environment variable.",
@@ -354,126 +329,213 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             }
         }
 
-        if (cacheManager.loadCache() != null && !cacheManager.isCacheExpired(settings.cacheRefreshSeconds)) {
-            loadTreeFromCache()
-        } else {
-            loadRootGroup()
-        }
-
-        // Schedule periodic refresh
-        CoroutineScope(Dispatchers.Default).launch {
-            while (isActive) {
-                delay(settings.refreshRateSeconds * 1000L)
-                withContext(Dispatchers.Main) {
-                    refreshGroups()
-                }
+        val cacheData: CacheData?
+        try {
+            cacheData = cacheManager.loadCache()
+        } catch (e: Exception) {
+            logger.error("Error loading cache", e)
+            Utils.executeAfterDelay(2) {
+                initialize(true)
             }
+            return
         }
 
         CoroutineScope(Dispatchers.Main).launch {
-            EventBus.events.collect { event ->
-                when (event.name) {
-                    "pipeline_status_changed" -> {
-                        val info = event.data as? PipelineInfo
-                        info?.let {
-                            if (it.oldStatus == Status.UNKNOWN)
-                                return@collect
+            if (cacheData != null) {
+                try {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        loadTreeFromCache(cacheData)
 
-                            Notifier.notifyInfo(
-                                "Pipeline Status Changed",
-                                "Project '${it.repositoryName}' pipeline status: ${it.oldStatus} → ${it.newStatus}",
-                                project
-                            )
+                        if (cacheManager.isCacheExpired(settings.cacheRefreshSeconds)) {
+                            refreshRootNode(saveCache = true, notify = false)
                         }
+
+                        onLoaded()
                     }
+                } catch (e: Exception) {
+                    logger.error("Error loading cache", e)
+                    Notifier.notifyError("GitLab Pipelines", "Failed to load cache.", project)
+                    loadRootGroup()
+                    onLoaded()
+                }
+            } else {
+                loadRootGroup()
+                onLoaded()
+            }
+
+            startScheduledEvents()
+            loadEventHandlers()
+        }
+    }
+
+    private fun startScheduledEvents() {
+        // Periodic refresh
+        CoroutineScope(Dispatchers.Default).launch {
+            while (isActive) {
+                delay(settings.refreshRateSeconds * 1000L)
+                withContext(Dispatchers.IO) {
+                    refreshRootNode()
                 }
             }
         }
     }
 
-    private fun loadTreeFromCache() {
+    private fun loadEventHandlers() {
+        CoroutineScope(Dispatchers.Main).launch {
+            EventBus.events.collect { event -> when (event.name) {
+                "pipeline_status_changed" -> {
+                    val info = event.data as? PipelineInfo
+                    info?.let {
+                        if (it.oldStatus == Status.UNKNOWN || it.newStatus == Status.UNKNOWN)
+                            return@collect
+
+                        Notifier.notifyInfo(
+                            "Pipeline Status Changed",
+                            "Project '${it.repositoryName}' pipeline status: ${it.oldStatus} → ${it.newStatus}",
+                            project
+                        )
+                    }
+                }
+            }}
+        }
+    }
+
+    private suspend fun loadTreeFromCache(cacheData: CacheData? = null) = withContext(Dispatchers.Main) {
         setLoadingText("Loading from cache...")
-        isRefreshing = false
-        isLoaded = false
+        isRefreshing.set(false)
 
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val cachedData = cacheManager.loadCache()
-                if (cachedData != null) {
-                    withContext(Dispatchers.Main) {
-                        setTreeRootNode(cachedData.treeData)
-                        isLoaded = true
-                        setLoadingText("")
-                        /*Utils.executeAfterDelay(5, {
-                            filterRepositories(Status.SUCCESS, treeModel.root as DefaultMutableTreeNode)
-                        })*/
-                    }
-                }
-            } catch (e: Exception) {
-                logger.error("Error loading cache", e)
-                setLoadingText("")
-                Notifier.notifyError("GitLab Pipelines", "Failed to load cache.", project)
-            }
-        }
-    }
-
-    private fun setTreeRootNode(node: MutableTreeNode) {
-        logger.debug("Populating tree from cache...")
-        treeModel.setRoot(node)
-        treeModel.reload()
-        refreshNodes(node as DefaultMutableTreeNode)
-    }
-
-    private fun refreshNodes(
-        node: DefaultMutableTreeNode,
-        resetStatus: Boolean = false,
-        saveCache: Boolean = true
-    ) {
         try {
-            val nodeData = node.userObject as? TreeNodeData
-            if (nodeData == null) {
-                logger.warn("refreshNodes: Invalid node data.")
-                return
-            }
+            val cachedData = cacheData ?: cacheManager.loadCache()
+            if (cachedData?.treeData != null) {
+                setTreeRootNode(cachedData.treeData, reload = false)
+                refreshExpandedFromNode(getTreeModel().root as DefaultMutableTreeNode)
+                val filter = getFilter(getTreeModel().root as DefaultMutableTreeNode)
+                if (!filter.isDefault()) {
+                    statusComboBox.selectedItem = filter.status!!.name.lowercase().capitalize()
+                    filterTree(filter.status, refreshNodes = false)
+                }
+                refreshNode(getTreeModel().root as DefaultMutableTreeNode)
 
-            if (node.childCount < 1 && nodeData.isGroup()) {
-                nodeData.status = Status.UNKNOWN
-                node.add(DefaultMutableTreeNode("Loading..."))
-                return
+                setLoadingText("")
+            } else {
+                setLoadingText("")
+                throw Exception("Invalid cache data.")
             }
+        } catch (e: Exception) {
+            logger.error("Error loading cache", e)
+            setLoadingText("")
+            Notifier.notifyError("GitLab Pipelines", "Failed to load cache.", project)
+        }
+    }
 
-            for (i in 0..<node.childCount) {
-                val child = node.getChildAt(i) as DefaultMutableTreeNode
-                val childData = child.userObject as? TreeNodeData
-                if (childData != null) {
-                    if (childData.isGroup()) {
-                        if (childData.isExpanded) {
-                            tree.expandPath(TreePath(child.path))
-                        }
-                        refreshNodes(child, saveCache)
-                    } else if (childData.isRepository()) {
-                        if (resetStatus) {
-                            childData.status = Status.UNKNOWN
-                        }
-                        if (childData.status == Status.UNKNOWN) {
-                            refreshRepository(child, saveCache)
-                        }
+    private fun getFilter(node: DefaultMutableTreeNode): Filter {
+        val data = node.userObject as? TreeNodeData
+        if (data != null && data.isGroup()) {
+            return data.filter
+        }
+        return Filter.DEFAULT
+    }
+
+    private fun loadUiHandlers() {
+        statusComboBox.addActionListener {
+            val selectedStatus = (statusComboBox.selectedItem as String).uppercase()
+            try {
+                val status = Status.valueOf(selectedStatus)
+                statusComboBox.isEnabled = false
+                CoroutineScope(Dispatchers.Main).launch {
+                    filterTree(status, refreshNodes = false)
+                    refreshNode(getTreeModel().root as DefaultMutableTreeNode, ignoreStatus = true)
+                    statusComboBox.isEnabled = true
+                }
+            } catch (e: IllegalArgumentException) {
+                if (selectedStatus != "ALL") {
+                    logger.error("Invalid status: $selectedStatus")
+                } else {
+                    statusComboBox.isEnabled = false
+                    CoroutineScope(Dispatchers.Main).launch {
+                        removeTreeFilter()
+                        refreshNode(getTreeModel().root as DefaultMutableTreeNode, ignoreStatus = true)
+                        statusComboBox.isEnabled = true
                     }
                 }
-            }
-        } finally {
-            CoroutineScope(Dispatchers.Main).launch {
-                setLoadingText("")
+                return@addActionListener
             }
         }
     }
 
-    private fun loadRootGroup() {
-        setLoadingText("Loading root group...")
-        isRefreshing = false
-        isLoaded = false
+    private suspend fun onLoaded() = withContext(Dispatchers.Main) {
+        loadTreeViewHandlers()
+        loadTreeModelHandlers()
+        loadUiHandlers()
+    }
 
-        CoroutineScope(Dispatchers.IO).launch {
+    private fun getTreeModel(): DefaultTreeModel {
+        return tree.model as DefaultTreeModel
+    }
+
+    private fun setTreeRootNode(node: MutableTreeNode, reload: Boolean = true) {
+        logger.debug("Populating tree from cache...")
+        val treeModel = getTreeModel()
+        treeModel.setRoot(node)
+
+        if (reload) {
+            treeModel.reload()
+        }
+    }
+
+    private suspend fun setTreeModel(
+        model: DefaultTreeModel,
+        loadHandlers: Boolean = true,
+        syncExpanded: Boolean = true,
+        refreshNodes: Boolean = true
+    ) {
+        tree.model = model
+        if (loadHandlers) {
+            loadTreeModelHandlers()
+        }
+
+        if (syncExpanded) {
+            refreshExpandedFromSet(model.root as DefaultMutableTreeNode)
+        }
+
+        if (refreshNodes) {
+            refreshNode(model.root as DefaultMutableTreeNode)
+        }
+    }
+
+    private fun refreshExpandedFromNode(node: DefaultMutableTreeNode) {
+        val data = node.userObject as? TreeNodeData
+        if (data != null && data.isGroup()) {
+            setExpanded(data, data.isExpanded)
+        }
+
+        for (i in 0..<node.childCount) {
+            val child = node.getChildAt(i) as DefaultMutableTreeNode
+            refreshExpandedFromNode(child)
+        }
+    }
+
+    private fun refreshExpandedFromSet(node: DefaultMutableTreeNode) {
+        val data = node.userObject as? TreeNodeData
+        if (data != null && data.isGroup()) {
+            setExpanded(data, expandedNodes.contains(data.id))
+        }
+
+        for (i in 0..<node.childCount) {
+            val child = node.getChildAt(i) as DefaultMutableTreeNode
+            refreshExpandedFromSet(child)
+        }
+    }
+
+    private suspend fun loadRootGroup() {
+        setLoadingText("Loading root group...")
+
+        withContext(Dispatchers.IO) {
+            if (isRefreshing.get()) {
+                Notifier.notifyWarning("GitLab Pipelines", "Already refreshing groups.", project)
+                return@withContext
+            }
+
             try {
                 val group = gitLabClient.searchGroup(settings.groupName)
                 withContext(Dispatchers.Main) {
@@ -483,8 +545,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     } else {
                         Notifier.notifyError("GitLab Pipelines", "Group not found: ${settings.groupName}", project)
                     }
-
-                    isLoaded = true
                 }
             } catch (e: Exception) {
                 logger.error("Error loading root group", e)
@@ -506,19 +566,50 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         ))
         root.add(DefaultMutableTreeNode("Loading..."))
         setTreeRootNode(root)
-        tree.collapsePath(TreePath(root.path))
     }
 
-    private fun loadSubgroupsAndRepositories(
+    private suspend fun clearCacheAndReload() {
+        cacheManager.clearCache()
+        loadRootGroup()
+        refreshRootNode()
+        Notifier.notifyInfo("GitLab Pipelines", "Cache cleared and reloaded.", project)
+    }
+
+    private fun isGroupNode(node: DefaultMutableTreeNode): Boolean {
+        val data = node.userObject as? TreeNodeData
+        return data != null && data.isGroup()
+    }
+
+    private fun isRepositoryNode(node: DefaultMutableTreeNode): Boolean {
+        val data = node.userObject as? TreeNodeData
+        return data != null && data.isRepository()
+    }
+
+    /**
+     * Refreshes the subgroups of a given group node.
+     *
+     * @param node The repository node.
+     * @param groupId The group ID.
+     * @param saveCache Whether to save the cache after refreshing. Will save the cache after all subgroups are loaded.
+     * @param reload Whether to reload the tree model. Will wait for all subgroups to be loaded before reloading.
+     */
+    private suspend fun loadSubgroups(
         node: DefaultMutableTreeNode,
         groupId: Int,
         saveCache: Boolean = true,
-        types: Set<GroupType> = setOf(GroupType.GROUP, GroupType.REPOSITORY)
-    ) {
+        reload: Boolean = true
+    ) = withContext(Dispatchers.IO) {
         try {
-            if (types.contains(GroupType.GROUP)) {
-                val subgroups = gitLabClient.getSubgroups(groupId)
-                subgroups.filter { it.id.toString() !in settings.ignoredGroups }.forEach { subgroup ->
+            if (!isGroupNode(node)) {
+                logger.warn("loadSubgroups: Not a group node. ${node.userObject}")
+                return@withContext
+            }
+
+            val subgroups = gitLabClient.getSubgroups(groupId)
+                .filter { it.id.toString() !in settings.ignoredGroups }
+
+            val insertJobs = subgroups.map { subgroup ->
+                async {
                     val subgroupNode = DefaultMutableTreeNode(TreeNodeData(
                         id = subgroup.id.toString(),
                         type = GroupType.GROUP,
@@ -528,47 +619,127 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                         displayName = getGroupDisplayName(subgroup.name)
                     ))
                     subgroupNode.add(DefaultMutableTreeNode("Loading..."))
-                    node.add(subgroupNode)
-                }
-            }
 
-            if (types.contains(GroupType.REPOSITORY)) {
-                val repositories = gitLabClient.getGroupRepositories(groupId)
-                repositories.forEach { repository ->
-                    val pipeline = gitLabClient.getLatestPipeline(repository.id)
-                    if (pipeline?.id == null) {
-                        logger.debug("No pipeline found for repository ${repository.name}")
-                        return@forEach
+                    withContext(Dispatchers.Main) {
+                        getTreeModel().insertNodeInto(subgroupNode, node, 0)
                     }
-                    val status = pipeline.status
-
-                    val repoNode = DefaultMutableTreeNode(TreeNodeData(
-                        id = repository.id.toString(),
-                        type = GroupType.REPOSITORY,
-                        status = status,
-                        webUrl = repository.web_url,
-                        parentGroup = extractGroupName(node),
-                        pipelineId = pipeline.id.toString(),
-                        name = repository.name,
-                        displayName = getRepositoryDisplayName(repository.name, status)
-                    ))
-                    node.add(repoNode)
                 }
             }
 
-            CoroutineScope(Dispatchers.Main).launch {
-                treeModel.reload(node)
+            insertJobs.awaitAll()
 
-                val data = node.userObject as TreeNodeData
-                if (data.isGroup()) {
-                    data.status = Status.SUCCESS
-                    if (data.isExpanded)
+            if (reload) {
+                getTreeModel().reload(node)
+            }
+
+            if (saveCache) {
+                cacheManager.saveCache(getTreeModel().root as DefaultMutableTreeNode)
+            }
+        } catch (e: Exception) {
+            logger.error("Error loading subgroups", e)
+            Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
+        }
+    }
+
+    /**
+     * Refreshes the repositories of a given group node.
+     *
+     * @param node The group node.
+     * @param repositoryId The group ID.
+     * @param saveCache Whether to save the cache after refreshing. Will save the cache after all repositories are loaded.
+     * @param reload Whether to reload the tree model. Will wait for all repositories to be loaded before reloading.
+     * @return Whether the repositories were loaded asynchronously.
+     */
+    private suspend fun loadRepositories(
+        node: DefaultMutableTreeNode,
+        repositoryId: Int,
+        saveCache: Boolean = true,
+        reload: Boolean = true
+    ) = withContext(Dispatchers.IO) {
+        try {
+            if (!isGroupNode(node)) {
+                logger.warn("loadRepositories: Not a group node ${node.userObject}")
+                return@withContext
+            }
+
+            val repositories = gitLabClient.getGroupRepositories(repositoryId)
+
+            val insertJobs = repositories.map { repository -> async {
+                val pipeline = gitLabClient.getLatestPipeline(repository.id)
+                if (pipeline?.id == null) {
+                    logger.debug("No pipeline found for repository ${repository.name}")
+                    return@async
+                }
+                val status = pipeline.status
+
+                val repoNode = DefaultMutableTreeNode(TreeNodeData(
+                    id = repository.id.toString(),
+                    type = GroupType.REPOSITORY,
+                    status = status,
+                    webUrl = repository.web_url,
+                    parentGroup = extractGroupName(node),
+                    pipelineId = pipeline.id.toString(),
+                    name = repository.name,
+                    displayName = getRepositoryDisplayName(repository.name, status)
+                ))
+
+                withContext(Dispatchers.Main) {
+                    getTreeModel().insertNodeInto(repoNode, node, node.childCount)
+                }
+            }}
+
+            insertJobs.awaitAll()
+
+            if (reload) {
+                getTreeModel().reload(node)
+            }
+
+            if (saveCache) {
+                cacheManager.saveCache(getTreeModel().root as DefaultMutableTreeNode)
+            }
+        } catch (e: Exception) {
+            logger.error("Error loading repositories", e)
+            Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
+        }
+    }
+
+    private suspend fun loadSubgroupsAndRepositories(
+        node: DefaultMutableTreeNode,
+        groupId: Int,
+        saveCache: Boolean = true,
+        loadTypes: Set<GroupType> = setOf(GroupType.GROUP, GroupType.REPOSITORY)
+    ) = withContext(Dispatchers.Main) {
+        try {
+            val jobs = mutableListOf<Deferred<Unit>>()
+
+            if (loadTypes.contains(GroupType.GROUP)) {
+                jobs.add(async { loadSubgroups(node, groupId, saveCache = false, reload = false) })
+            }
+
+            if (loadTypes.contains(GroupType.REPOSITORY)) {
+                jobs.add(async { loadRepositories(node, groupId, saveCache = false, reload = false) })
+            }
+
+            jobs.awaitAll()
+
+            getTreeModel().reload(node)
+
+            val data = node.userObject as TreeNodeData
+            if (data.isGroup()) {
+                data.status = Status.SUCCESS
+                if (isExpanded(data)) {
+                    if (!tree.isExpanded(TreePath(node.path))) {
                         tree.expandPath(TreePath(node.path))
+                    }
+                } else {
+                    if (tree.isExpanded(TreePath(node.path))) {
+                        tree.collapsePath(TreePath(node.path))
+                    }
                 }
+            }
 
-                if (saveCache) {
-                    cacheManager.saveCache(treeModel.root as DefaultMutableTreeNode)
-                }
+            if (saveCache) {
+                cacheManager.saveCache(getTreeModel().root as DefaultMutableTreeNode)
             }
         } catch (e: Exception) {
             logger.error("Error loading subgroups/repositories", e)
@@ -600,34 +771,30 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         return groupUrl
     }
 
-    private fun refreshGroups(saveCache: Boolean = true, notify: Boolean = false) {
+    private suspend fun refreshRootNode(saveCache: Boolean = true, notify: Boolean = false) {
         setLoadingText("Refreshing groups...", makeBaseText = true)
-        if (isRefreshing) {
+        if (isRefreshing.get()) {
             Notifier.notifyWarning("GitLab Pipelines", "Already refreshing groups.", project)
             return
         }
 
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val rootNode = tree.model.root as DefaultMutableTreeNode
-                refreshGroupNode(rootNode, false, notify)
+        try {
+            val rootNode = getTreeModel().root as DefaultMutableTreeNode
+            refreshNode(rootNode, false, notify, true)
 
-                if (saveCache) {
-                    cacheManager.saveCache(rootNode)
-                }
-            } catch (e: Exception) {
-                logger.error("Error refreshing groups", e)
-                Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
-            } finally {
-                withContext(Dispatchers.Main) {
-                    setLoadingText("", makeBaseText = true)
-                }
+            if (saveCache) {
+                cacheManager.saveCache(rootNode)
             }
+        } catch (e: Exception) {
+            logger.error("Error refreshing groups", e)
+            Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
+        } finally {
+            setLoadingText("", makeBaseText = true)
         }
     }
     
     private fun setLoadingText(text: String, makeBaseText: Boolean = false) {
-        if (lockLoadingLabel)
+        if (lockLoadingLabel.get())
             return
         if (makeBaseText)
             baseLoadingText = text
@@ -635,109 +802,146 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         loadingLabel.text = text.ifEmpty { baseLoadingText }
     }
 
-    private fun filterRepositories(status: Status, rootNode: DefaultMutableTreeNode) {
-        CoroutineScope(Dispatchers.Main).launch {
-            for (i in 0..<rootNode.childCount) {
-                val node = rootNode.getChildAt(i) as DefaultMutableTreeNode
-                val data = node.userObject as? TreeNodeData ?: continue
-                if (data.isGroup() && data.isExpanded) {
-                    filterRepositories(status, node)
-                } else if (data.isRepository()) {
-                    if (data.status == status) {
-                        showTreeNode(node)
-                    } else {
-                        hideTreeNode(node)
-                    }
-                }
+    private suspend fun filterTree(
+        status: Status,
+        node: DefaultMutableTreeNode = getTreeModel().root as DefaultMutableTreeNode,
+        syncExpanded: Boolean = false,
+        loadHandlers: Boolean = true,
+        refreshNodes: Boolean = true
+    ) = withContext(Dispatchers.Main) {
+        val filteredModel = FilteredTreeModel(getTreeModel()) { n ->
+            val data = n.userObject as? TreeNodeData
+            if (data == null || !data.isRepository()) {
+                true
+            } else {
+                !hiddenNodes.contains(data.id)
             }
+        }.filter(node, filter = Filter(status))
+
+        if (filteredModel != null) {
+            setTreeModel(filteredModel,
+                syncExpanded = syncExpanded,
+                loadHandlers = loadHandlers,
+                refreshNodes = refreshNodes)
         }
     }
 
-    private fun showTreeNode(node: DefaultMutableTreeNode) {
-        val data = node.userObject as? TreeNodeData
-        if (data != null) {
-            if (hiddenNodes.remove(data.id)) {
-                filteredTreeModel.signalTreeStructureChanged(node.parent as DefaultMutableTreeNode)
+    private suspend fun removeTreeFilter() {
+        val treeModel = tree.model
+        if (treeModel is FilteredTreeModel) {
+            val unfilteredModel = treeModel.unfilteredModel
+            val root = unfilteredModel.root as DefaultMutableTreeNode
+            val data = root.userObject as? TreeNodeData
+            if (data != null && data.isGroup()) {
+                data.filter = Filter.DEFAULT
             }
+            setTreeModel(treeModel.unfilteredModel, loadHandlers = false)
         }
     }
 
-    private fun hideTreeNode(node: DefaultMutableTreeNode) {
-        val data = node.userObject as? TreeNodeData
-        if (data != null) {
-            if (hiddenNodes.add(data.id)) {
-                filteredTreeModel.signalTreeStructureChanged(node.parent as DefaultMutableTreeNode)
-            }
-        }
-    }
-
-    private suspend fun refreshGroupNode(
+    private suspend fun refreshNode(
         node: DefaultMutableTreeNode,
         saveCache: Boolean = true,
-        notify: Boolean = false
+        notify: Boolean = false,
+        ignoreStatus: Boolean = false,
+        force: Boolean = false
     ) {
-        isRefreshing = true
+        if (!force && isRefreshing.get()) {
+            logger.warn("refreshGroupNode: Already refreshing, skipping.")
+            return
+        }
+        isRefreshing.set(true)
 
         if (node.userObject !is TreeNodeData) {
             return
         }
 
-        var data = node.userObject as? TreeNodeData
-        if (notify && data != null && data.isGroup()) {
-            setLoadingText("Refreshing group '${data.name}'...", makeBaseText = true)
-        }
+        val treeModel = getTreeModel()
+        val isRoot = node == treeModel.root
+        val data = node.userObject as? TreeNodeData
 
         try {
-            if ((data == null || (data.isGroup() && data.isStatusUnknown())) && node.childCount < 2) {
-                val groupName = data?.name ?: extractGroupName(node)
-                val group = gitLabClient.searchGroup(groupName)
-                if (group != null) {
-                    loadSubgroupsAndRepositories(node, group.id, false)
-                    refreshGroupNode(node, saveCache = saveCache, notify = false)
-                    return
+            if (isRoot && notify) {
+                setLoadingText("Refreshing group '${data?.name?:node.toString()}'...", makeBaseText = true)
+            }
+
+            if (data != null) {
+                if (node.childCount < 1 && data.isGroup()) {
+                    data.status = Status.UNKNOWN
+                    getTreeModel().insertNodeInto(DefaultMutableTreeNode("Loading..."), node, node.childCount)
+
+                    if (isExpanded(data)) {
+                        if (!tree.isExpanded(TreePath(node.path))) {
+                            tree.expandPath(TreePath(node.path))
+                        }
+                    } else {
+                        if (tree.isExpanded(TreePath(node.path))) {
+                            tree.collapsePath(TreePath(node.path))
+                        }
+                    }
                 } else {
-                    loadRootGroup()
-                    return
+                    if (isExpanded(data)) {
+                        if (!tree.isExpanded(TreePath(node.path))) {
+                            tree.expandPath(TreePath(node.path))
+                        }
+
+                        if (ignoreStatus || data.status == Status.UNKNOWN) {
+                            val groupName = data.name ?: extractGroupName(node)
+                            val group = gitLabClient.searchGroup(groupName)
+                            if (group != null) {
+                                withContext(Dispatchers.Main) {
+                                    node.removeAllChildren()
+                                }
+                                loadSubgroupsAndRepositories(node, group.id, saveCache = saveCache)
+                            }
+                        }
+                    } else {
+                        if (data.isGroup()) {
+                            if (tree.isExpanded(TreePath(node.path))) {
+                                tree.collapsePath(TreePath(node.path))
+                            }
+                        }
+                        else if (data.isRepository() && (ignoreStatus || data.status == Status.UNKNOWN)) {
+                            refreshRepository(node, saveCache)
+                        }
+                    }
                 }
             }
 
             for (i in 0..<node.childCount) {
                 val child = node.getChildAt(i) as DefaultMutableTreeNode
                 if (child.userObject !is TreeNodeData) {
-                    logger.warn("refreshGroupNode: Invalid node data, skipping ${child}.")
+                    logger.debug("refreshGroupNode: Invalid node data, skipping '${child}'.")
                     continue
                 }
 
-                data = child.userObject as TreeNodeData
-                if (data.isGroup() && data.isExpanded) {
-                    val groupName = data.name ?: extractGroupName(child)
-                    val group = gitLabClient.searchGroup(groupName)
-                    if (group != null) {
-                        removeRepositories(child)
-                        loadSubgroupsAndRepositories(child, group.id, false, setOf(GroupType.REPOSITORY))
-                        refreshGroupNode(child, saveCache = saveCache, notify = false)
-                    }
-                } else {
-                    if (data.isRepository()) {
-                        refreshRepository(child, saveCache)
-                    }
-                }
+                refreshNode(child,
+                    saveCache = saveCache,
+                    notify = false,
+                    ignoreStatus = ignoreStatus,
+                    force = true)
             }
 
-            if (node == treeModel.root) {
+            if (isRoot) {
                 withContext(Dispatchers.Main) {
-                    val dateFormat = java.text.SimpleDateFormat("MM/dd HH:mm")
-                    val lastRefreshTime = dateFormat.format(java.util.Date())
-                    lastRefreshLabel.text = "Last refresh: $lastRefreshTime"
-                    if (notify)
-                        Notifier.notifyInfo("GitLab Pipelines", "Groups refreshed.", project)
+                    updateLastRefreshLabel(notify)
                 }
             }
         } finally {
-            isRefreshing = false
+            isRefreshing.set(false)
+
             withContext(Dispatchers.Main) {
                 setLoadingText("", makeBaseText = notify)
             }
+        }
+    }
+
+    private fun updateLastRefreshLabel(notify: Boolean = false) {
+        val dateFormat = java.text.SimpleDateFormat("MM/dd HH:mm")
+        val lastRefreshTime = dateFormat.format(java.util.Date())
+        lastRefreshLabel.text = "Last refresh: $lastRefreshTime"
+        if (notify) {
+            Notifier.notifyInfo("GitLab Pipelines", "Groups refreshed.", project)
         }
     }
 
@@ -749,7 +953,20 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 toRemove.add(child)
             }
         }
-        toRemove.forEach { node.remove(it) }
+
+        toRemove.forEach { getTreeModel().removeNodeFromParent(it) }
+    }
+
+    private fun removeGroups(node: DefaultMutableTreeNode) {
+        val toRemove = mutableListOf<DefaultMutableTreeNode>()
+        for (i in 0..<node.childCount) {
+            val child = node.getChildAt(i) as DefaultMutableTreeNode
+            if (child.userObject is TreeNodeData && (child.userObject as TreeNodeData).isGroup()) {
+                toRemove.add(child)
+            }
+        }
+
+        toRemove.forEach { getTreeModel().removeNodeFromParent(it) }
     }
 
     private fun getRepositoryDisplayName(repoName: String, status: Status): String {
@@ -790,8 +1007,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             GroupType.GROUP -> {
                 popupMenu.add(JMenuItem("Refresh").apply {
                     addActionListener {
-                        CoroutineScope(Dispatchers.IO).launch {
-                            refreshGroupNode(selectedNode, notify = true)
+                        CoroutineScope(Dispatchers.Main).launch {
+                            refreshNode(selectedNode, notify = true, ignoreStatus = true)
                         }
                     }
                 })
@@ -804,6 +1021,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                             } catch (e: Exception) {
                                 Notifier.notifyError("Open in Browser", "Failed to open URL: $url", project)
                             }
+                        }
+                    }
+                })
+                popupMenu.addSeparator()
+                popupMenu.add(JMenuItem("Clear Cache").apply {
+                    addActionListener {
+                        CoroutineScope(Dispatchers.Main).launch {
+                            clearCacheAndReload()
                         }
                     }
                 })
@@ -870,7 +1095,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 val retriedPipeline = gitLabClient.retryPipeline(projectId, pipeline.id)
                 withContext(Dispatchers.Main) {
                     Notifier.notifyInfo("Retrying Pipeline", "Pipeline ${data.name}:${retriedPipeline?.id} retried successfully.", project)
-                    Utils.executeAfterDelay(3) {
+                    Utils.executeAfterDelay(this, 3, Dispatchers.IO) {
                         refreshRepository(node)
                     }
                 }
@@ -915,68 +1140,96 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         return text.removePrefix("Group: ").trim()
     }
 
-    private fun refreshRepository(node: DefaultMutableTreeNode, saveCache: Boolean = true) {
+    private suspend fun refreshRepository(
+        node: DefaultMutableTreeNode,
+        saveCache: Boolean = true
+    ) = withContext(Dispatchers.IO) {
         val nodeData = node.userObject as? TreeNodeData ?: run {
             Notifier.notifyError("Refresh Project", "Invalid node data.", project)
-            return
+            return@withContext
         }
 
         if (!nodeData.isRepository()) {
             Notifier.notifyWarning("Refresh Repository", "Selected node is not a repository.", project)
-            return
+            return@withContext
         }
 
         if (hiddenNodes.contains(nodeData.id)) {
             logger.debug("Skipping refresh for hidden node: ${nodeData.name}")
-            return
+            return@withContext
         }
 
-        CoroutineScope(Dispatchers.IO).launch {
-            withContext(Dispatchers.Main) {
-                setLoadingText("Refreshing project '${nodeData.name}'...")
-            }
+        withContext(Dispatchers.Main) {
+            setLoadingText("Refreshing project '${nodeData.name}'...")
+        }
 
-            try {
-                val pipeline = gitLabClient.getLatestPipeline(nodeData.id.toInt())
+        try {
+            val pipeline = gitLabClient.getLatestPipeline(nodeData.id.toInt())
+            if (pipeline != null) {
+                val oldStatus = nodeData.status
+                nodeData.status = pipeline.status
+                nodeData.pipelineId = pipeline.id.toString()
+                nodeData.displayName = getRepositoryDisplayName(nodeData.name ?: "", pipeline.status)
 
                 withContext(Dispatchers.Main) {
-                    if (pipeline != null) {
-                        val oldStatus = nodeData.status
-                        nodeData.status = pipeline.status
-                        nodeData.pipelineId = pipeline.id.toString()
-                        nodeData.displayName = getRepositoryDisplayName(nodeData.name ?: "", pipeline.status)
+                    // Update the node's display text
+                    node.userObject = nodeData
+                    getTreeModel().nodeChanged(node)
 
-                        // Update the node's display text
-                        node.userObject = nodeData
-                        treeModel.nodeChanged(node)
-
-                        if (oldStatus != pipeline.status) {
-                            EventBus.publish(EventBus.Event("pipeline_status_changed", PipelineInfo(
-                                projectId = nodeData.id,
-                                repositoryName = nodeData.name ?: "",
-                                oldStatus = oldStatus,
-                                newStatus = pipeline.status
-                            )))
-                        }
-
-                        if (saveCache) {
-                            // Update the cache with the new tree state
-                            cacheManager.saveCache(treeModel.root as DefaultMutableTreeNode)
-                        }
-
-                        setLoadingText("")
-                    } else {
-                        Notifier.notifyWarning("No Pipeline", "No pipeline found for project '${nodeData.name}'.", project)
+                    if (oldStatus != pipeline.status) {
+                        EventBus.publish(
+                            EventBus.Event(
+                                "pipeline_status_changed", PipelineInfo(
+                                    projectId = nodeData.id,
+                                    repositoryName = nodeData.name ?: "",
+                                    oldStatus = oldStatus,
+                                    newStatus = pipeline.status
+                                )
+                            )
+                        )
                     }
-                }
-            } catch (e: Exception) {
-                logger.error("Error refreshing project", e)
-                withContext(Dispatchers.Main) {
+
+                    if (saveCache) {
+                        cacheManager.saveCache(getTreeModel().root as DefaultMutableTreeNode)
+                    }
+
                     setLoadingText("")
-                    Notifier.notifyError("Refresh Project", e.message ?: "Unknown error", project)
                 }
+            } else {
+                Notifier.notifyWarning("No Pipeline",
+                    "No pipeline found for project '${nodeData.name}'.", project)
+            }
+        } catch (e: Exception) {
+            logger.error("Error refreshing project", e)
+            withContext(Dispatchers.Main) {
+                setLoadingText("")
+                Notifier.notifyError("Refresh Project", e.message ?: "Unknown error", project)
             }
         }
+    }
+
+    private fun setExpanded(node: DefaultMutableTreeNode, expanded: Boolean) {
+        val data = node.userObject as? TreeNodeData
+        return data?.let { setExpanded(it, expanded) } ?: Unit
+    }
+
+    private fun setExpanded(data: TreeNodeData, expanded: Boolean) {
+        if (expanded) {
+            data.isExpanded = true
+            expandedNodes.add(data.id)
+        } else {
+            data.isExpanded = false
+            expandedNodes.remove(data.id)
+        }
+    }
+
+    private fun isExpanded(node: DefaultMutableTreeNode): Boolean {
+        val data = node.userObject as? TreeNodeData
+        return data != null && isExpanded(data)
+    }
+
+    private fun isExpanded(data: TreeNodeData): Boolean {
+        return data.isGroup() && expandedNodes.contains(data.id)
     }
 
     class Factory : ToolWindowFactory {
