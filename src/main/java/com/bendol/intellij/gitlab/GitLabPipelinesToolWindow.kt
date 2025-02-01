@@ -70,6 +70,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private val cacheManager = CacheManager(project)
     private val settings = GitLabSettingsState.getInstance().state
     private var isRefreshing = AtomicBoolean(false)
+    private var lockTreeEvents = AtomicBoolean(false)
     private var lockLoadingLabel = AtomicBoolean(false)
     private var baseLoadingText = ""
     private val hiddenNodes: MutableSet<String> = ConcurrentSet()
@@ -222,6 +223,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private fun loadTreeViewHandlers() {
         tree.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                if (lockTreeEvents.get())
+                    return
+
                 if (e?.clickCount == 2) {
                     handleTreeDoubleClick()
                 } else if (SwingUtilities.isRightMouseButton(e)) {
@@ -232,6 +236,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
         tree.addTreeExpansionListener(object : javax.swing.event.TreeExpansionListener {
             override fun treeExpanded(event: javax.swing.event.TreeExpansionEvent?) {
+                if (lockTreeEvents.get())
+                    return
                 val node = event?.path?.lastPathComponent as? DefaultMutableTreeNode ?: return
                 val nodeData = node.userObject as? TreeNodeData ?: return
 
@@ -259,15 +265,17 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             }
 
             override fun treeCollapsed(event: javax.swing.event.TreeExpansionEvent?) {
+                if (lockTreeEvents.get())
+                    return
                 val node = event?.path?.lastPathComponent as? DefaultMutableTreeNode ?: return
                 val nodeData = node.userObject as? TreeNodeData ?: return
                 if (nodeData.isGroup()) {
                     setExpanded(nodeData, false)
-                }
 
-                CoroutineScope(Dispatchers.IO).launch {
-                    if (!isRefreshing.get()) {
-                        cacheManager.saveCache(getTreeModel().root as DefaultMutableTreeNode)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        if (!isRefreshing.get()) {
+                            cacheManager.saveCache(getTreeModel().root as DefaultMutableTreeNode)
+                        }
                     }
                 }
             }
@@ -276,7 +284,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
     private fun loadTreeModelHandlers() {
         val treeModel = getTreeModel()
-        treeModel.addTreeModelListener(object : javax.swing.event.TreeModelListener {
+        /*treeModel.addTreeModelListener(object : javax.swing.event.TreeModelListener {
             override fun treeNodesChanged(e: javax.swing.event.TreeModelEvent?) {
             }
 
@@ -288,7 +296,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
             override fun treeStructureChanged(e: javax.swing.event.TreeModelEvent?) {
             }
-        })
+        })*/
     }
 
     private fun initialize(retry: Boolean = false) {
@@ -402,19 +410,12 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
     private suspend fun loadTreeFromCache(cacheData: CacheData? = null) = withContext(Dispatchers.Main) {
         setLoadingText("Loading from cache...")
-        isRefreshing.set(false)
 
         try {
             val cachedData = cacheData ?: cacheManager.loadCache()
             if (cachedData?.treeData != null) {
                 setTreeRootNode(cachedData.treeData, reload = false)
                 refreshExpandedFromNode(getTreeModel().root as DefaultMutableTreeNode)
-                val filter = getFilter(getTreeModel().root as DefaultMutableTreeNode)
-                if (!filter.isDefault()) {
-                    statusComboBox.selectedItem = filter.status!!.name.lowercase().capitalize()
-                    filterTree(filter.status, refreshNodes = false)
-                }
-                refreshNode(getTreeModel().root as DefaultMutableTreeNode)
 
                 setLoadingText("")
             } else {
@@ -444,6 +445,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 statusComboBox.isEnabled = false
                 CoroutineScope(Dispatchers.Main).launch {
                     filterTree(status, refreshNodes = false)
+                    refreshExpandedFromSet(getTreeModel().root as DefaultMutableTreeNode)
                     refreshNode(getTreeModel().root as DefaultMutableTreeNode, ignoreStatus = true)
                     statusComboBox.isEnabled = true
                 }
@@ -453,7 +455,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 } else {
                     statusComboBox.isEnabled = false
                     CoroutineScope(Dispatchers.Main).launch {
-                        removeTreeFilter()
+                        removeTreeFilter(refreshNodes = false)
+                        refreshExpandedFromSet(getTreeModel().root as DefaultMutableTreeNode)
                         refreshNode(getTreeModel().root as DefaultMutableTreeNode, ignoreStatus = true)
                         statusComboBox.isEnabled = true
                     }
@@ -464,6 +467,13 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     }
 
     private suspend fun onLoaded() = withContext(Dispatchers.Main) {
+        val filter = getFilter(getTreeModel().root as DefaultMutableTreeNode)
+        if (!filter.isDefault()) {
+            statusComboBox.selectedItem = filter.status!!.name.lowercase().capitalize()
+            filterTree(filter.status, refreshNodes = false)
+        }
+        refreshNode(getTreeModel().root as DefaultMutableTreeNode, saveCache = false)
+
         loadTreeViewHandlers()
         loadTreeModelHandlers()
         loadUiHandlers()
@@ -490,6 +500,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         refreshNodes: Boolean = true
     ) {
         tree.model = model
+
         if (loadHandlers) {
             loadTreeModelHandlers()
         }
@@ -731,6 +742,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     if (!tree.isExpanded(TreePath(node.path))) {
                         tree.expandPath(TreePath(node.path))
                     }
+
+                    if (node.childCount < 1) {
+                        node.add(DefaultMutableTreeNode("No results found."))
+                    }
                 } else {
                     if (tree.isExpanded(TreePath(node.path))) {
                         tree.collapsePath(TreePath(node.path))
@@ -826,7 +841,11 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         }
     }
 
-    private suspend fun removeTreeFilter() {
+    private suspend fun removeTreeFilter(
+        syncExpanded: Boolean = false,
+        loadHandlers: Boolean = true,
+        refreshNodes: Boolean = true
+    ) {
         val treeModel = tree.model
         if (treeModel is FilteredTreeModel) {
             val unfilteredModel = treeModel.unfilteredModel
@@ -835,7 +854,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             if (data != null && data.isGroup()) {
                 data.filter = Filter.DEFAULT
             }
-            setTreeModel(treeModel.unfilteredModel, loadHandlers = false)
+            setTreeModel(treeModel.unfilteredModel,
+                loadHandlers = loadHandlers,
+                syncExpanded = syncExpanded,
+                refreshNodes = refreshNodes)
         }
     }
 

@@ -11,7 +11,8 @@ import javax.swing.tree.MutableTreeNode
 
 class FilteredTreeModel(
     val unfilteredModel: DefaultTreeModel,
-    private var filter: Predicate<DefaultMutableTreeNode>
+    private var dynamicFilter: Predicate<DefaultMutableTreeNode>? = null,
+    private var persistentFilter: Predicate<DefaultMutableTreeNode>
 ) : DefaultTreeModel(unfilteredModel.root as DefaultMutableTreeNode) {
 
     var isFiltering: AtomicBoolean = AtomicBoolean(false)
@@ -68,7 +69,7 @@ class FilteredTreeModel(
     }
 
     fun insertNode(newChild: MutableTreeNode, parent: DefaultMutableTreeNode): Boolean {
-        if (filter.test(newChild as DefaultMutableTreeNode)) {
+        if (test(newChild as DefaultMutableTreeNode)) {
             super.insertNodeInto(newChild, parent, parent.childCount)
             return true
         }
@@ -76,9 +77,13 @@ class FilteredTreeModel(
     }
 
     override fun insertNodeInto(newChild: MutableTreeNode, parent: MutableTreeNode, index: Int) {
-        if (filter.test(newChild as DefaultMutableTreeNode)) {
+        if (test(newChild as DefaultMutableTreeNode)) {
             super.insertNodeInto(newChild, parent, index)
         }
+    }
+
+    fun test(node: DefaultMutableTreeNode): Boolean {
+        return persistentFilter.test(node) && (dynamicFilter == null || dynamicFilter!!.test(node))
     }
 
     /**
@@ -92,7 +97,7 @@ class FilteredTreeModel(
     ): FilteredTreeModel? {
         val result = filter(root, noResultsMessage, reload) { node ->
             val data = node.userObject as? TreeNodeData
-            data != null && filter.isMatch(data)
+            data == null || !data.isRepository() || filter.isMatch(data)
         }
 
         if (result == null) {
@@ -121,9 +126,12 @@ class FilteredTreeModel(
             return null
         }
         isFiltering.set(true)
+
+        this.dynamicFilter = filter
         val filterResult = filterTree(root) { node ->
-            this.filter.test(node) && (filter == null || filter.test(node))
+            persistentFilter.test(node) && (filter == null || filter.test(node))
         }
+
         val newRoot = filterResult.filteredNode
         if (newRoot != null) {
             setRoot(newRoot)
