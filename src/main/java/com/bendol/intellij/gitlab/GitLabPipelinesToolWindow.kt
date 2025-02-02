@@ -472,7 +472,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             statusComboBox.selectedItem = filter.status!!.name.lowercase().capitalize()
             filterTree(filter.status, refreshNodes = false)
         }
-        refreshNode(getTreeModel().root as DefaultMutableTreeNode, saveCache = false)
+        refreshNode(getTreeModel().root as DefaultMutableTreeNode,
+            saveCache = false,
+            placeholderText = "No results found.")
 
         loadTreeViewHandlers()
         loadTreeModelHandlers()
@@ -714,6 +716,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         }
     }
 
+    /**
+     * Load subgroups and repositories for a given group node.
+     *
+     * @param node The group node.
+     * @param groupId The group ID.
+     * @param saveCache Whether to save the cache after refreshing.
+     * @param loadTypes The types to load (group, repository).
+     */
     private suspend fun loadSubgroupsAndRepositories(
         node: DefaultMutableTreeNode,
         groupId: Int,
@@ -739,12 +749,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             if (data.isGroup()) {
                 data.status = Status.SUCCESS
                 if (isExpanded(data)) {
-                    if (!tree.isExpanded(TreePath(node.path))) {
-                        tree.expandPath(TreePath(node.path))
+                    if (node.childCount == 0 ||
+                       (node.childCount == 1 && (node.getChildAt(0) as DefaultMutableTreeNode).userObject is String)) {
+                        node.removeAllChildren()
+                        node.add(DefaultMutableTreeNode("No results found."))
                     }
 
-                    if (node.childCount < 1) {
-                        node.add(DefaultMutableTreeNode("No results found."))
+                    if (!tree.isExpanded(TreePath(node.path))) {
+                        tree.expandPath(TreePath(node.path))
                     }
                 } else {
                     if (tree.isExpanded(TreePath(node.path))) {
@@ -779,7 +791,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
         val groupUrl = nodeData.webUrl
         if (groupUrl.isNullOrEmpty()) {
-            Notifier.notifyWarning("Extract Group URL", "Group '${nodeData.name}' does not have a valid URL.", project)
+            Notifier.notifyWarning(
+                "Extract Group URL",
+                "Group '${nodeData.name}' does not have a valid URL.", project)
             return null
         }
 
@@ -866,7 +880,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         saveCache: Boolean = true,
         notify: Boolean = false,
         ignoreStatus: Boolean = false,
-        force: Boolean = false
+        force: Boolean = false,
+        placeholderText: String = "Loading..."
     ) {
         if (!force && isRefreshing.get()) {
             logger.warn("refreshGroupNode: Already refreshing, skipping.")
@@ -890,7 +905,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             if (data != null) {
                 if (node.childCount < 1 && data.isGroup()) {
                     data.status = Status.UNKNOWN
-                    getTreeModel().insertNodeInto(DefaultMutableTreeNode("Loading..."), node, node.childCount)
+                    getTreeModel().insertNodeInto(
+                        DefaultMutableTreeNode(placeholderText), node, node.childCount)
 
                     if (isExpanded(data)) {
                         if (!tree.isExpanded(TreePath(node.path))) {
@@ -941,7 +957,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     saveCache = saveCache,
                     notify = false,
                     ignoreStatus = ignoreStatus,
-                    force = true)
+                    force = true,
+                    placeholderText = placeholderText)
             }
 
             if (isRoot) {
@@ -1116,7 +1133,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             try {
                 val retriedPipeline = gitLabClient.retryPipeline(projectId, pipeline.id)
                 withContext(Dispatchers.Main) {
-                    Notifier.notifyInfo("Retrying Pipeline", "Pipeline ${data.name}:${retriedPipeline?.id} retried successfully.", project)
+                    Notifier.notifyInfo(
+                        "Retrying Pipeline",
+                        "Pipeline ${data.name}:${retriedPipeline?.id} retried successfully.", project)
                     Utils.executeAfterDelay(this, 3, Dispatchers.IO) {
                         refreshRepository(node)
                     }
@@ -1142,7 +1161,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             try {
                 val newPipeline = gitLabClient.createPipeline(projectId, "development") // TODO prompt for ref
                 withContext(Dispatchers.Main) {
-                    Notifier.notifyInfo("Creating Pipeline", "Pipeline ${data.name}:${newPipeline?.id} created successfully.", project)
+                    Notifier.notifyInfo(
+                        "Creating Pipeline",
+                        "Pipeline ${data.name}:${newPipeline?.id} created successfully.", project)
                     refreshRepository(node)
                 }
             } catch (e: Exception) {
@@ -1154,12 +1175,12 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
     private fun extractRepositoryName(node: DefaultMutableTreeNode): String {
         val text = node.userObject.toString()
-        return text.removePrefix("Repository: ").split(" (")[0].trim()
+        return text.trim()//text.removePrefix("Repository: ").split(" (")[0].trim()
     }
 
     private fun extractGroupName(node: DefaultMutableTreeNode): String {
         val text = node.userObject.toString()
-        return text.removePrefix("Group: ").trim()
+        return text.trim()//text.removePrefix("Group: ").trim()
     }
 
     private suspend fun refreshRepository(
