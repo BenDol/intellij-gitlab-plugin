@@ -53,7 +53,7 @@ class GitLabClient(
 
     fun getSubgroups(groupId: Int): List<Group> {
         val url = "$apiUrl/groups/$groupId/subgroups"
-        val request = buildRequest(url)
+        val request = buildRequest(url, mapOf("per_page" to "200"))
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("Unexpected code $response")
             val listType = object : TypeToken<List<Group>>() {}.type
@@ -63,7 +63,7 @@ class GitLabClient(
 
     fun getGroupRepositories(groupId: Int): List<Repository> {
         val url = "$apiUrl/groups/$groupId/projects"
-        val request = buildRequest(url, mapOf("include_subgroups" to "false"))
+        val request = buildRequest(url, mapOf("include_subgroups" to "false", "per_page" to "200"))
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("Unexpected code $response")
             val listType = object : TypeToken<List<Repository>>() {}.type
