@@ -75,6 +75,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private var baseLoadingText = ""
     private val hiddenNodes: MutableSet<String> = ConcurrentSet()
     private val expandedNodes: MutableSet<String> = ConcurrentSet()
+    private val pipelineStatuses: MutableMap<String, Status> = ConcurrentMap()
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -416,6 +417,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             if (cachedData?.treeData != null) {
                 setTreeRootNode(cachedData.treeData, reload = false)
                 refreshExpandedFromNode(getTreeModel().root as DefaultMutableTreeNode)
+                refreshStatusesFromNode(getTreeModel().root as DefaultMutableTreeNode)
 
                 setLoadingText("")
             } else {
@@ -446,6 +448,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 CoroutineScope(Dispatchers.Main).launch {
                     filterTree(status, refreshNodes = false)
                     refreshExpandedFromSet(getTreeModel().root as DefaultMutableTreeNode)
+                    refreshStatusFromMap(getTreeModel().root as DefaultMutableTreeNode)
                     refreshNode(getTreeModel().root as DefaultMutableTreeNode, ignoreStatus = true)
                     statusComboBox.isEnabled = true
                 }
@@ -457,6 +460,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     CoroutineScope(Dispatchers.Main).launch {
                         removeTreeFilter(refreshNodes = false)
                         refreshExpandedFromSet(getTreeModel().root as DefaultMutableTreeNode)
+                        refreshStatusFromMap(getTreeModel().root as DefaultMutableTreeNode)
                         refreshNode(getTreeModel().root as DefaultMutableTreeNode, ignoreStatus = true)
                         statusComboBox.isEnabled = true
                     }
@@ -540,6 +544,33 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         }
     }
 
+    private fun refreshStatusesFromNode(node: DefaultMutableTreeNode) {
+        val data = node.userObject as? TreeNodeData
+        if (data != null && data.isRepository()) {
+            pipelineStatuses[data.id] = data.status
+        }
+
+        for (i in 0..<node.childCount) {
+            val child = node.getChildAt(i) as DefaultMutableTreeNode
+            refreshStatusesFromNode(child)
+        }
+    }
+
+    private fun refreshStatusFromMap(node: DefaultMutableTreeNode) {
+        val data = node.userObject as? TreeNodeData
+        if (data != null && data.isRepository()) {
+            val status = pipelineStatuses[data.id]
+            if (status != null) {
+                data.status = status
+            }
+        }
+
+        for (i in 0..<node.childCount) {
+            val child = node.getChildAt(i) as DefaultMutableTreeNode
+            refreshStatusFromMap(child)
+        }
+    }
+
     private suspend fun loadRootGroup() {
         setLoadingText("Loading root group...")
 
@@ -620,6 +651,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
             val subgroups = gitLabClient.getSubgroups(groupId)
                 .filter { it.id.toString() !in settings.ignoredGroups }
+            subgroups.sortedBy { it.name }
 
             val insertJobs = subgroups.map { subgroup ->
                 async {
@@ -676,6 +708,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             }
 
             val repositories = gitLabClient.getGroupRepositories(repositoryId)
+            repositories.sortedBy { it.name }
 
             val insertJobs = repositories.map { repository -> async {
                 val pipeline = gitLabClient.getLatestPipeline(repository.id)
@@ -683,15 +716,29 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     logger.debug("No pipeline found for repository ${repository.name}")
                     return@async
                 }
+                val repoId = repository.id.toString()
                 val status = pipeline.status
+                val oldStatus = pipelineStatuses[repoId]
+                pipelineStatuses[repoId] = status
+
+                if (oldStatus != null && oldStatus != status) {
+                    EventBus.publish(EventBus.Event(
+                        "pipeline_status_changed", PipelineInfo(
+                            projectId = repoId,
+                            repositoryName = repository.name,
+                            oldStatus = oldStatus,
+                            newStatus = pipeline.status
+                        )
+                    ))
+                }
 
                 val repoNode = DefaultMutableTreeNode(TreeNodeData(
-                    id = repository.id.toString(),
+                    id = repoId,
                     type = GroupType.REPOSITORY,
                     status = status,
                     webUrl = repository.web_url,
                     parentGroup = extractGroupName(node),
-                    pipelineId = pipeline.id.toString(),
+                    pipelineId = pipeline.id,
                     name = repository.name,
                     displayName = getRepositoryDisplayName(repository.name, status)
                 ))
@@ -1209,10 +1256,11 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         try {
             val pipeline = gitLabClient.getLatestPipeline(nodeData.id.toInt())
             if (pipeline != null) {
-                val oldStatus = nodeData.status
+                val oldStatus = pipelineStatuses[nodeData.id] ?: nodeData.status
                 nodeData.status = pipeline.status
-                nodeData.pipelineId = pipeline.id.toString()
+                nodeData.pipelineId = pipeline.id
                 nodeData.displayName = getRepositoryDisplayName(nodeData.name ?: "", pipeline.status)
+                pipelineStatuses[nodeData.id] = pipeline.status
 
                 withContext(Dispatchers.Main) {
                     // Update the node's display text
@@ -1220,16 +1268,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     getTreeModel().nodeChanged(node)
 
                     if (oldStatus != pipeline.status) {
-                        EventBus.publish(
-                            EventBus.Event(
-                                "pipeline_status_changed", PipelineInfo(
-                                    projectId = nodeData.id,
-                                    repositoryName = nodeData.name ?: "",
-                                    oldStatus = oldStatus,
-                                    newStatus = pipeline.status
-                                )
+                        EventBus.publish(EventBus.Event(
+                            "pipeline_status_changed", PipelineInfo(
+                                projectId = nodeData.id,
+                                repositoryName = nodeData.name ?: "",
+                                oldStatus = oldStatus,
+                                newStatus = pipeline.status
                             )
-                        )
+                        ))
                     }
 
                     if (saveCache) {

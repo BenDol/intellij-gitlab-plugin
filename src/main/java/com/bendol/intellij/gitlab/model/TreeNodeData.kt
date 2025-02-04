@@ -6,7 +6,7 @@ data class TreeNodeData(
     var status: Status = Status.UNKNOWN, // Pipeline status for repositories
     val webUrl: String? = null,          // URL to the group/repository in GitLab
     val parentGroup: String? = null,     // Parent group name or ID
-    var pipelineId: String? = null,      // Pipeline ID for repositories
+    var pipelineId: Int? = null,         // Pipeline ID for repositories
     val name: String? = null,            // Name of the group/repository
     var displayName: String,             // Display name of the group/repository
     var isExpanded: Boolean = false,     // Whether the node is expanded
