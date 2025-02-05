@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.bendol.intellij.gitlab"
-version = "1.0.0"
+version = "0.1.2a"
 
 repositories {
   mavenCentral()
