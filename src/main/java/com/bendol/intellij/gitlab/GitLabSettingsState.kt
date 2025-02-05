@@ -20,6 +20,7 @@ class GitLabSettingsState : PersistentStateComponent<GitLabSettingsState.State> 
             "4241428" to listOf("2.0-SNAPSHOT", "2.0.0-SNAPSHOT", "1.0-SNAPSHOT", "1.0.0-SNAPSHOT")
         ),
         var useEnvVarToken: Boolean = true,
+        var foundEnvVarWarned: Boolean = false,
         var debugEnabled: Boolean = false
     )
 

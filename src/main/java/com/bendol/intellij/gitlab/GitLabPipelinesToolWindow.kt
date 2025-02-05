@@ -339,13 +339,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             gitLabClient = GitLabClient(tokenManager, settings.gitlabApiUrl)
         }
 
-        if (settings.useEnvVarToken) {
+        if (settings.useEnvVarToken && !settings.foundEnvVarWarned) {
             val envToken = System.getenv("GITLAB_TOKEN")
             if (!retry && !envToken.isNullOrEmpty()) {
                 Notifier.notifyInfo(
                     localize("gitlab.environmentVarDetected.title"),
                     localize("gitlab.environmentVarDetected.message"),
                     project)
+                settings.foundEnvVarWarned = true
             }
         }
 
@@ -397,7 +398,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             while (isActive) {
                 delay(settings.refreshRateSeconds * 1000L)
                 withContext(Dispatchers.IO) {
-                    refreshRootNode()
+                    refreshRootNode(fromCacheIfNotExpired = true)
                 }
             }
         }
@@ -862,11 +863,25 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         return groupUrl
     }
 
-    private suspend fun refreshRootNode(saveCache: Boolean = true, notify: Boolean = false) {
+    private suspend fun refreshRootNode(
+        fromCacheIfNotExpired: Boolean = false,
+        saveCache: Boolean = true,
+        notify: Boolean = false
+    ): Boolean {
         setLoadingText(localize("refreshing.groups"), makeBaseText = true)
         if (isRefreshing.get()) {
             Notifier.notifyWarning(pipelineWindowTitle, localize("warning.alreadyRefreshedGroups"), project)
-            return
+            return false
+        }
+
+        if (fromCacheIfNotExpired && !cacheManager.isCacheExpired(settings.cacheRefreshSeconds)) {
+            try {
+                loadTreeFromCache()
+                return true
+            } catch (e: Exception) {
+                logger.error("Error loading cache", e)
+                Notifier.notifyError(pipelineWindowTitle, e.message ?: localize("error.unknown"), project)
+            }
         }
 
         try {
@@ -876,12 +891,15 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             if (saveCache) {
                 cacheManager.saveCache(rootNode)
             }
+
+            return true
         } catch (e: Exception) {
             logger.error("Error refreshing groups", e)
             Notifier.notifyError(pipelineWindowTitle, e.message ?: localize("error.unknown"), project)
         } finally {
             setLoadingText("", makeBaseText = true)
         }
+        return false
     }
     
     private fun setLoadingText(text: String, makeBaseText: Boolean = false) {
@@ -946,7 +964,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         placeholderText: String = localize("loading")
     ) {
         if (!force && isRefreshing.get()) {
-            logger.warn("refreshGroupNode: Already refreshing, skipping.")
+            logger.warn("refreshNode: Already refreshing, skipping.")
             return
         }
         isRefreshing.set(true)

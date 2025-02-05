@@ -178,6 +178,7 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
         if (settings.useEnvVarToken) {
             GitLabTokenManager.getInstance().clearToken()
         } else {
+            settings.foundEnvVarWarned = false
             val newToken = String(tokenField?.password ?: CharArray(0))
             if (newToken.isNotBlank()) {
                 CoroutineScope(Dispatchers.IO).launch {
