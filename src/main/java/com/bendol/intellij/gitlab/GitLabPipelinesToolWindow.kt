@@ -398,7 +398,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             while (isActive) {
                 delay(settings.refreshRateSeconds * 1000L)
                 withContext(Dispatchers.IO) {
-                    refreshRootNode(fromCacheIfNotExpired = true)
+                    refreshRootNode(fromCacheIfUpdated = true)
                 }
             }
         }
@@ -615,7 +615,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             status = Status.UNKNOWN,
             webUrl = group.web_url,
             name = group.name,
-            displayName = getGroupDisplayName(group.name)
         ))
         root.add(DefaultMutableTreeNode(localize("loading")))
         setTreeRootNode(root)
@@ -670,7 +669,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                         status = Status.UNKNOWN,
                         webUrl = subgroup.web_url,
                         name = subgroup.name,
-                        displayName = getGroupDisplayName(subgroup.name)
                     ))
                     subgroupNode.add(DefaultMutableTreeNode(localize("loading")))
 
@@ -749,7 +747,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     parentGroup = extractGroupName(node),
                     pipelineId = pipeline.id,
                     name = repository.name,
-                    displayName = getRepositoryDisplayName(repository.name, status)
                 ))
 
                 withContext(Dispatchers.Main) {
@@ -830,10 +827,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         }
     }
 
-    private fun getGroupDisplayName(groupName: String): String {
-        return /*"Group: */"$groupName"
-    }
-
     private fun extractGroupUrl(node: DefaultMutableTreeNode): String? {
         val nodeData = node.userObject as? TreeNodeData ?: run {
             Notifier.notifyError(
@@ -864,7 +857,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     }
 
     private suspend fun refreshRootNode(
-        fromCacheIfNotExpired: Boolean = false,
+        fromCacheIfUpdated: Boolean = false,
         saveCache: Boolean = true,
         notify: Boolean = false
     ): Boolean {
@@ -874,7 +867,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             return false
         }
 
-        if (fromCacheIfNotExpired && !cacheManager.isCacheExpired(settings.cacheRefreshSeconds)) {
+        if (fromCacheIfUpdated && cacheManager.isUpdatedRecently()) {
             try {
                 loadTreeFromCache()
                 return true
@@ -1088,10 +1081,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         toRemove.forEach { getTreeModel().removeNodeFromParent(it) }
     }
 
-    private fun getRepositoryDisplayName(repoName: String, status: Status): String {
-        return /*"Repository: */"$repoName (${status.name.lowercase()})"
-    }
-
     private fun handleTreeDoubleClick() {
         val selectedNode = tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return
         if (selectedNode.userObject !is TreeNodeData) {
@@ -1100,10 +1089,28 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         }
         val data = selectedNode.userObject as TreeNodeData
         if (data.isRepository()) {
-            val repoUrl = extractRepositoryUrl(selectedNode)
-            repoUrl?.let {
-                java.awt.Desktop.getDesktop().browse(java.net.URI("$it/-/pipelines/${data.pipelineId}"))
+            if (data.pipelineId == null) {
+                Notifier.notifyWarning(
+                    localize("gitlab.pipeline.openBrowser"),
+                    localize("gitlab.pipeline.openBrowser.noPipelineId"),
+                    project)
+            } else {
+                val repoUrl = extractRepositoryUrl(selectedNode)
+                repoUrl?.let {
+                    openPipelineInBrowser(it, data.pipelineId!!)
+                }
             }
+        }
+    }
+
+    private fun openPipelineInBrowser(repoUrl: String, pipelineId: Int) {
+        try {
+            java.awt.Desktop.getDesktop().browse(java.net.URI("$repoUrl/-/pipelines/$pipelineId"))
+        } catch (e: Exception) {
+            Notifier.notifyError(
+                localize("gitlab.pipeline.openBrowser"),
+                localize("gitlab.pipeline.openBrowser.failed", "$repoUrl/-/pipelines/$pipelineId"),
+                project)
         }
     }
 
@@ -1166,12 +1173,12 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 popupMenu.add(JMenuItem(localize("gitlab.pipeline.contextMenu.openBrowser")).apply {
                     addActionListener {
                         nodeData.webUrl?.let { url ->
-                            try {
-                                java.awt.Desktop.getDesktop().browse(java.net.URI("$url/-/pipelines/${nodeData.pipelineId}"))
-                            } catch (e: Exception) {
-                                Notifier.notifyError(
+                            if (nodeData.pipelineId != null) {
+                                openPipelineInBrowser(url, nodeData.pipelineId!!)
+                            } else {
+                                Notifier.notifyWarning(
                                     localize("gitlab.pipeline.contextMenu.openBrowser"),
-                                    localize("gitlab.pipeline.contextMenu.openBrowser.failed", url),
+                                    localize("gitlab.pipeline.contextMenu.openBrowser.noPipelineId"),
                                     project)
                             }
                         } ?: run {
@@ -1227,11 +1234,24 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val retriedPipeline = gitLabClient.retryPipeline(projectId, pipeline.id)
+                val webUrl = data.webUrl
+                val pipelineId = retriedPipeline?.id
+
                 withContext(Dispatchers.Main) {
                     Notifier.notifyInfo(
                         localize("gitlab.pipeline.contextMenu.retry"),
                         localize("gitlab.pipeline.contextMenu.retry.success", data.name ?: "", retriedPipeline?.id.toString()),
-                        project)
+                        project, if (pipelineId != null) mapOf(
+                            localize("gitlab.pipeline.contextMenu.openBrowser") to {
+                                webUrl?.let { url -> openPipelineInBrowser(url, pipelineId) }
+                            },
+                            localize("cancel") to {
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    cancelPipeline(node)
+                                }
+                            }
+                        ) else null
+                    )
                     Utils.executeAfterDelay(this, 3, Dispatchers.IO) {
                         refreshRepository(node)
                     }
@@ -1243,6 +1263,82 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     e.message ?: localize("error.unknown"), project)
             }
         }
+    }
+
+    private suspend fun cancelPipeline(node: DefaultMutableTreeNode) {
+        val data = node.userObject as? TreeNodeData
+        if (data == null) {
+            Notifier.notifyError(
+                localize("gitlab.pipeline.contextMenu.cancel"),
+                localize("gitlab.pipeline.contextMenu.cancel.invalidNode"),
+                project)
+            return
+        }
+
+        val projectId = data.id.toInt()
+        val pipelineId = data.pipelineId
+        if (pipelineId == null) {
+            Notifier.notifyError(
+                localize("gitlab.pipeline.contextMenu.cancel"),
+                localize("gitlab.pipeline.contextMenu.cancel.noPipelineId"),
+                project)
+            return
+        }
+
+        cancelPipeline(projectId, pipelineId)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            Utils.executeAfterDelay(this, 3, Dispatchers.IO) {
+                refreshRepository(node)
+            }
+        }
+    }
+
+    private suspend fun cancelPipeline(projectId: Int, pipelineId: Int) = withContext(Dispatchers.IO) {
+        try {
+            val projectName = findTreeNodeData(projectId.toString())?.name ?: ""
+            val canceledPipeline = gitLabClient.cancelPipeline(projectId, pipelineId)
+            withContext(Dispatchers.Main) {
+                Notifier.notifyInfo(
+                    localize("gitlab.pipeline.contextMenu.cancel"),
+                    localize("gitlab.pipeline.contextMenu.cancel.success", projectName, canceledPipeline?.id.toString()),
+                    project)
+            }
+        } catch (e: Exception) {
+            logger.error("Error canceling pipeline", e)
+            Notifier.notifyError(
+                localize("gitlab.pipeline.contextMenu.cancel"),
+                e.message ?: localize("error.unknown"), project)
+        }
+    }
+
+    private fun findTreeNodeData(
+        id: String,
+        root: DefaultMutableTreeNode = getTreeModel().root as DefaultMutableTreeNode
+    ): TreeNodeData? {
+        return findTreeNodeData(root) { it.id == id }
+    }
+
+    private fun findTreeNodeData(
+        root: DefaultMutableTreeNode = getTreeModel().root as DefaultMutableTreeNode,
+        predicate: (TreeNodeData) -> Boolean
+    ): TreeNodeData? {
+        if (root.userObject is TreeNodeData) {
+            val data = root.userObject as TreeNodeData
+            if (predicate(data)) {
+                return data
+            }
+        }
+
+        for (i in 0..<root.childCount) {
+            val child = root.getChildAt(i) as DefaultMutableTreeNode
+            val data = findTreeNodeData(child, predicate)
+            if (data != null) {
+                return data
+            }
+        }
+
+        return null
     }
 
     private fun createPipeline(node: DefaultMutableTreeNode) {
@@ -1261,11 +1357,30 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val newPipeline = gitLabClient.createPipeline(projectId, "development") // TODO prompt for ref
+                if (newPipeline == null) {
+                    Notifier.notifyError(
+                        localize("gitlab.pipeline.contextMenu.create"),
+                        localize("gitlab.pipeline.contextMenu.create.failed"),
+                        project)
+                    return@launch
+                }
+
                 withContext(Dispatchers.Main) {
                     Notifier.notifyInfo(
                         localize("gitlab.pipeline.contextMenu.create"),
                         localize("gitlab.pipeline.contextMenu.create.success"),
-                        project)
+                        project,
+                        mapOf(
+                            localize("gitlab.pipeline.contextMenu.openBrowser") to {
+                                val repoUrl = extractRepositoryUrl(node)
+                                repoUrl?.let { url -> openPipelineInBrowser(url, newPipeline.id) }
+                            },
+                            localize("cancel") to {
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    cancelPipeline(node)
+                                }
+                            }
+                        ))
                     refreshRepository(node)
                 }
             } catch (e: Exception) {
@@ -1323,7 +1438,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 val oldStatus = pipelineStatuses[nodeData.id] ?: nodeData.status
                 nodeData.status = pipeline.status
                 nodeData.pipelineId = pipeline.id
-                nodeData.displayName = getRepositoryDisplayName(nodeData.name ?: "", pipeline.status)
                 pipelineStatuses[nodeData.id] = pipeline.status
 
                 withContext(Dispatchers.Main) {

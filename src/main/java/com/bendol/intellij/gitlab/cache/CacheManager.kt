@@ -88,4 +88,15 @@ class CacheManager(project: Project, cacheFileName: String = "cache.json") {
             return true
         }
     }
+
+    fun isUpdatedRecently(thresholdSeconds: Int = 60): Boolean {
+        try {
+            val cacheData = loadCache() ?: return false
+            val age = (System.currentTimeMillis() - (cacheData.timestamp ?: System.currentTimeMillis())) / 1000
+            return age < thresholdSeconds
+        } catch (e: Exception) {
+            logger.error("Failed to check cache expiration", e)
+            return false
+        }
+    }
 }

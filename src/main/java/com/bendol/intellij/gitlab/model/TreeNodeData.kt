@@ -8,11 +8,20 @@ data class TreeNodeData(
     val parentGroup: String? = null,     // Parent group name or ID
     var pipelineId: Int? = null,         // Pipeline ID for repositories
     val name: String? = null,            // Name of the group/repository
-    var displayName: String,             // Display name of the group/repository
     var isExpanded: Boolean = false,     // Whether the node is expanded
     var filter: Filter = Filter.DEFAULT, // Filter for pipeline status
 ) {
-    override fun toString(): String = displayName
+    override fun toString(): String {
+        return getDisplayName()
+    }
+
+    fun getDisplayName(): String {
+        return if (isGroup()) {
+            "$name"
+        } else {
+            "$name (${status.toString().lowercase()})"
+        }
+    }
 
     fun isRepository(): Boolean {
         return type == GroupType.REPOSITORY

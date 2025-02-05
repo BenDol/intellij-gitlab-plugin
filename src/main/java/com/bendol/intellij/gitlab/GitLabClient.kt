@@ -71,8 +71,8 @@ class GitLabClient(
         }
     }
 
-    fun getLatestPipeline(projectId: Int, branch: String? = null): Pipeline? {
-        var url = "$apiUrl/projects/$projectId/pipelines"
+    fun getLatestPipeline(repositoryId: Int, branch: String? = null): Pipeline? {
+        var url = "$apiUrl/projects/$repositoryId/pipelines"
         val params = mutableMapOf<String, String>()
         if (branch != null) {
             params["ref"] = branch
@@ -89,8 +89,8 @@ class GitLabClient(
         }
     }
 
-    fun retryPipeline(projectId: Int, pipelineId: Int): Pipeline? {
-        val url = "$apiUrl/projects/$projectId/pipelines/$pipelineId/retry"
+    fun retryPipeline(repositoryId: Int, pipelineId: Int): Pipeline? {
+        val url = "$apiUrl/projects/$repositoryId/pipelines/$pipelineId/retry"
         val request = Request.Builder()
             .url(url)
             .post("".toRequestBody("application/json".toMediaTypeOrNull()))
@@ -102,8 +102,8 @@ class GitLabClient(
         }
     }
 
-    fun createPipeline(projectId: Int, ref: String = "development"): Pipeline? {
-        val url = "$apiUrl/projects/$projectId/pipeline"
+    fun createPipeline(repositoryId: Int, ref: String = "development"): Pipeline? {
+        val url = "$apiUrl/projects/$repositoryId/pipeline"
         val json = gson.toJson(mapOf("ref" to ref))
         val body = json.toRequestBody("application/json".toMediaTypeOrNull())
         val request = Request.Builder()
@@ -113,6 +113,19 @@ class GitLabClient(
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("Failed to create pipeline: $response")
+            return gson.fromJson(response.body?.charStream(), Pipeline::class.java)
+        }
+    }
+
+    fun cancelPipeline(repositoryId: Int, pipelineId: Int): Pipeline? {
+        val url = "$apiUrl/projects/$repositoryId/pipelines/$pipelineId/cancel"
+        val request = Request.Builder()
+            .url(url)
+            .post("".toRequestBody("application/json".toMediaTypeOrNull()))
+            .addHeader("Private-Token", tokenManager.getToken()!!)
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("Failed to cancel pipeline: $response")
             return gson.fromJson(response.body?.charStream(), Pipeline::class.java)
         }
     }

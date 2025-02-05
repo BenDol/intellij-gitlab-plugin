@@ -2,7 +2,10 @@ package com.bendol.intellij.gitlab.model
 
 import com.bendol.intellij.gitlab.locale.LocaleBundle
 
-enum class Status(val displayName: String) {
+enum class Status(
+    val displayName: String,
+    private var localizedName: String? = null
+) {
     ANY("status.any"),
     CREATED("status.created"),
     WAITING_FOR_RESOURCE("status.waitingForResource"),
@@ -26,6 +29,9 @@ enum class Status(val displayName: String) {
     UNKNOWN("status.unknown");
 
     override fun toString(): String {
-        return LocaleBundle.localize(displayName)
+        if (localizedName == null) {
+            localizedName = LocaleBundle.localize(displayName)
+        }
+        return localizedName!!
     }
 }
