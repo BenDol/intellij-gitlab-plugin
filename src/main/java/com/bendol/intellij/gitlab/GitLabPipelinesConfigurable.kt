@@ -1,5 +1,6 @@
 package com.bendol.intellij.gitlab
 
+import com.bendol.intellij.gitlab.locale.LocaleBundle.localize
 import com.bendol.intellij.gitlab.util.Notifier
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
@@ -50,7 +51,9 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
 
     override fun getId(): String = GitLabPipelinesConfigurable::class.java.name
 
-    override fun getDisplayName(): String = "Pipelines"
+    override fun getDisplayName(): String {
+        return localize("gitlab.pipeline.settings.displayName")
+    }
 
     override fun createComponent(): JComponent {
         if (panel == null) {
@@ -75,26 +78,26 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
 
             // GitLab API URL
             apiUrlField = JTextField()
-            addLabeledField("GitLab API URL:", apiUrlField!!)
+            addLabeledField(localize("settings.pipelines.gitlabApiUrl.label"), apiUrlField!!)
 
             // Group Name
             groupNameField = JTextField()
-            addLabeledField("Group Name:", groupNameField!!)
+            addLabeledField(localize("settings.pipelines.gitlabGroupName.label"), groupNameField!!)
 
             tokenField = JBPasswordField()
-            addLabeledField("GitLab Token:", tokenField!!)
+            addLabeledField(localize("settings.pipelines.gitlabToken.label"), tokenField!!)
 
             // Cache Refresh Seconds
             cacheRefreshField = JTextField()
-            addLabeledField("Cache Refresh (seconds):", cacheRefreshField!!)
+            addLabeledField(localize("settings.pipelines.cacheRefresh.label"), cacheRefreshField!!)
 
             // Refresh Rate Seconds
             refreshRateField = JTextField()
-            addLabeledField("Refresh Rate (seconds):", refreshRateField!!)
+            addLabeledField(localize("settings.pipelines.refreshRate.label"), refreshRateField!!)
 
             // Ignored Groups (comma-separated)
             ignoredGroupsField = JTextField()
-            addLabeledField("Ignored Groups (comma-separated):", ignoredGroupsField!!)
+            addLabeledField(localize("settings.pipelines.ignoredGroups.label"), ignoredGroupsField!!)
 
             // Branches (JSON input)
             branchesField = JTextArea(9, 30).apply {
@@ -104,24 +107,24 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
             val branchesScrollPane = JScrollPane(branchesField).apply {
                 maximumSize = Dimension(Integer.MAX_VALUE, 300)
             }
-            addLabeledField("Branches { \"Group Id\": [ <branches in order of preference> ] }:", branchesScrollPane)
+            addLabeledField(localize("settings.pipelines.branches.label"), branchesScrollPane)
 
             // Use Environment Variable Checkbox
-            useEnvVarCheckBox = JCheckBox("Use Environment Variable for Token").apply {
+            useEnvVarCheckBox = JCheckBox(localize("settings.pipelines.useEnvVar.label")).apply {
                 alignmentX = Component.LEFT_ALIGNMENT
             }
             panel?.add(useEnvVarCheckBox)
             panel?.add(Box.createRigidArea(Dimension(0, 10)))
 
             // Debug Checkbox
-            debugCheckBox = JCheckBox("Enable Debug").apply {
+            debugCheckBox = JCheckBox(localize("settings.pipelines.enableDebug.label")).apply {
                 alignmentX = Component.LEFT_ALIGNMENT
             }
             panel?.add(debugCheckBox)
             panel?.add(Box.createRigidArea(Dimension(0, 10)))
 
             val infoLabel = JLabel(
-                "<html><i>The GitLab token can also be set via the <b>GITLAB_TOKEN</b> environment variable.</i></html>"
+                "<html><i>${localize("settings.pipelines.useEnvVar.help", "<b>GITLAB_TOKEN</b>")}</i></html>"
             ).apply {
                 foreground = JBColor.GRAY
                 alignmentX = Component.LEFT_ALIGNMENT
@@ -167,7 +170,9 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
         try {
             settings.branches = gson.fromJson(branchesField?.text, object : TypeToken<Map<String, List<String>>>() {}.type)
         } catch (e: Exception) {
-            Notifier.notifyError("Invalid JSON", "Branches must be in valid JSON format.")
+            Notifier.notifyError(
+                localize("settings.pipelines.branches.invalidJson.title"),
+                localize("settings.pipelines.branches.invalidJson.message"))
         }
 
         if (settings.useEnvVarToken) {
@@ -182,13 +187,19 @@ class GitLabPipelinesConfigurable : SearchableConfigurable {
                         val group = client.searchGroup(settings.groupName)
                         if (group != null) {
                             GitLabTokenManager.getInstance().setToken(newToken)
-                            Notifier.notifyInfo("Token Valid", "GitLab token is valid and has been saved.")
+                            Notifier.notifyInfo(
+                                localize("settings.pipelines.gitlabToken.valid.title"),
+                                localize("settings.pipelines.gitlabToken.valid.message"))
                         } else {
-                            Notifier.notifyError("Invalid Token", "Failed to validate the GitLab token.")
+                            Notifier.notifyError(
+                                localize("settings.pipelines.gitlabToken.invalid.title"),
+                                localize("settings.pipelines.gitlabToken.invalid.message"))
                         }
                     } catch (e: Exception) {
                         logger.error("Failed to validate GitLab token", e)
-                        Notifier.notifyError("Token Validation Error", e.message ?: "Unknown error")
+                        Notifier.notifyError(
+                            localize("settings.pipelines.gitlabToken.invalid.title"),
+                            e.message ?: localize("error.unknown"))
                     }
                 }
             }

@@ -14,14 +14,14 @@
   <extensions defaultExtensionNs="com.intellij">
     <notificationGroup id="GitLab Notifications" displayType="BALLOON" />
 
-    <toolWindow id="GitLab Pipelines" anchor="right" factoryClass="com.bendol.intellij.gitlab.GitLabPipelinesToolWindow$Factory"/>
+    <toolWindow id="Gitlab Pipelines" anchor="right" factoryClass="com.bendol.intellij.gitlab.GitLabPipelinesToolWindow$Factory"/>
 
     <applicationConfigurable
         instance="com.bendol.intellij.gitlab.GitLabSettingsConfigurable"
         displayName="GitLab"/>
     <applicationConfigurable
-        displayName="Pipelines"
         instance="com.bendol.intellij.gitlab.GitLabPipelinesConfigurable"
-        groupId="com.bendol.intellij.gitlab.GitLabSettingsConfigurable"/>
+        groupId="com.bendol.intellij.gitlab.GitLabSettingsConfigurable"
+        displayName="Pipelines"/>
   </extensions>
 </idea-plugin>

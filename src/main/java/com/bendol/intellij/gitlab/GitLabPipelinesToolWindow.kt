@@ -1,11 +1,14 @@
 package com.bendol.intellij.gitlab
 
+import com.bendol.intellij.gitlab.Style.Borders
+import com.bendol.intellij.gitlab.Style.Colors
+import com.bendol.intellij.gitlab.Style.Images
 import com.bendol.intellij.gitlab.cache.CacheData
 import com.bendol.intellij.gitlab.cache.CacheManager
+import com.bendol.intellij.gitlab.locale.LocaleBundle.localize
 import com.bendol.intellij.gitlab.model.Filter
 import com.bendol.intellij.gitlab.model.Group
 import com.bendol.intellij.gitlab.model.GroupType
-import com.bendol.intellij.gitlab.model.Images
 import com.bendol.intellij.gitlab.model.PipelineInfo
 import com.bendol.intellij.gitlab.model.Status
 import com.bendol.intellij.gitlab.model.TreeNodeData
@@ -34,13 +37,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.awt.Color
 import java.awt.Dimension
 import java.awt.Image
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.Icon
@@ -61,10 +62,12 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
     private val logger: Logger = Logger.getInstance(GitLabPipelinesToolWindow::class.java)
 
+    private val pipelineWindowTitle = localize("toolWindow.gitlab.pipelines")
+
     private val tree: Tree
     private val loadingLabel: JLabel = JLabel("")
     private val lastRefreshLabel: JLabel = JLabel("")
-    private val statusComboBox = ComboBox(arrayOf("All", "Success", "Failed", "Skipped", "Running"))
+    private val statusComboBox = ComboBox(arrayOf(Status.ANY, Status.SUCCESS, Status.FAILED, Status.SKIPPED, Status.RUNNING))
 
     private lateinit var gitLabClient: GitLabClient
     private val cacheManager = CacheManager(project)
@@ -79,7 +82,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        tree = Tree(DefaultTreeModel(DefaultMutableTreeNode("Loading...")))
+        tree = Tree(DefaultTreeModel(DefaultMutableTreeNode(localize("loading"))))
         setupUI()
         initialize()
     }
@@ -91,8 +94,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         // Input Panel
         val inputPanel = JPanel()
         inputPanel.layout = BoxLayout(inputPanel, BoxLayout.X_AXIS)
-        inputPanel.border = BorderFactory.createEmptyBorder(5, 5, 5, 5)
-        inputPanel.background = JBColor.background()
+        inputPanel.border = Borders.PANEL_DEFAULT.asBorder()
+        inputPanel.background = Colors.BACKGROUND_PANEL.asColor()
 
         statusComboBox.maximumSize = Dimension(Int.MAX_VALUE, 30)
         inputPanel.add(Box.createRigidArea(Dimension(5, 0)))
@@ -107,15 +110,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         // Status Panel
         val statusPanel = JPanel()
         statusPanel.layout = BoxLayout(statusPanel, BoxLayout.X_AXIS)
-        statusPanel.border = BorderFactory.createEmptyBorder(5, 5, 5, 5)
-        statusPanel.background = JBColor.background()
+        statusPanel.border = Borders.PANEL_DEFAULT.asBorder()
+        statusPanel.background = Colors.BACKGROUND_PANEL.asColor()
         statusPanel.add(loadingLabel)
         statusPanel.add(Box.createHorizontalGlue())
         statusPanel.add(lastRefreshLabel)
 
         add(statusPanel)
 
-        @Suppress("UseJBColor")
         val renderer = object : DefaultTreeCellRenderer() {
             private val scaledIconCache: MutableMap<Icon, Icon> = HashMap()
 
@@ -131,8 +133,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 val component = super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus)
                 val node = value as? DefaultMutableTreeNode ?: return component
                 val nodeData = node.userObject as? TreeNodeData ?: return component
-                backgroundNonSelectionColor = Color(0, 0, 0, 0)
-                font = font.deriveFont(14.0f)
+                backgroundNonSelectionColor = Colors.TREE_NO_SELECT_BACKGROUND.asColor()
+                val fontStyle = Style.Fonts.TREE_NODE
+                font = if (fontStyle.shouldDerive()) fontStyle.derive(font) else fontStyle.toFont()
 
                 when (nodeData.type) {
                     GroupType.GROUP -> {
@@ -142,19 +145,27 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                         when (nodeData.status) {
                             Status.SUCCESS, Status.MANUAL -> {
                                 icon = Images.SuccessIcon
-                                foreground = Color.decode("0x9cff9c")
+                                foreground = Colors.TEXT_SUCCESS.asColor()
                             }
                             Status.FAILED, Status.CANCELED -> {
                                 icon = Images.FailedIcon
-                                foreground = Color.decode("0xff8080")
+                                foreground = Colors.TEXT_FAILED.asColor()
                             }
-                            Status.SKIPPED, Status.RUNNING, Status.PENDING -> {
+                            Status.RUNNING -> {
+                                icon = Images.RunningIcon
+                                foreground = Colors.TEXT_RUNNING.asColor()
+                            }
+                            Status.PENDING -> {
+                                icon = Images.PendingIcon
+                                foreground = Colors.TEXT_PENDING.asColor()
+                            }
+                            Status.SKIPPED -> {
                                 icon = Images.SkippedIcon
-                                foreground = Color.white//Color.decode("0xcccccc")
+                                foreground = Colors.TEXT_SKIPPED.asColor()
                             }
                             else -> {
-                                icon = null
-                                foreground = JBColor.foreground()
+                                icon = Images.UnknownIcon
+                                foreground = Colors.TEXT_UNKNOWN.asColor()
                             }
                         }
                     }
@@ -246,7 +257,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     setExpanded(nodeData, true)
 
                     if (!isRefreshing.get() && nodeData.isStatusUnknown()) {
-                        setLoadingText("Loading group '${nodeData.name}'...")
+                        setLoadingText(localize("loading.group", nodeData.name ?: nodeData.id))
                         node.removeAllChildren()
                         CoroutineScope(Dispatchers.IO).launch {
                             loadSubgroupsAndRepositories(node, nodeData.id.toInt())
@@ -306,13 +317,13 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         if (token.isNullOrEmpty()) {
             if (!retry) {
                 Notifier.notifyWarning(
-                    title = "GitLab Token Missing",
-                    message = "Please provide a GitLab Personal Access Token in the settings",
+                    title = localize("gitlab.tokenMissing.title"),
+                    message = localize("gitlab.tokenMissing.message"),
                     project = project,
-                    actions = mapOf(Pair("Settings") {
+                    actions = mapOf(Pair(localize("gitlab.tokenMissing.actionSettings")) {
                         ShowSettingsUtil.getInstance().showSettingsDialog(
                             project,
-                            "GitLab Pipelines"
+                            localize("gitlab.settings.displayName")
                         )
                     })
                 )
@@ -332,8 +343,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             val envToken = System.getenv("GITLAB_TOKEN")
             if (!retry && !envToken.isNullOrEmpty()) {
                 Notifier.notifyInfo(
-                    "Environment Variable Detected",
-                    "GitLab token loaded from environment variable. Restart the IDE if you update the environment variable.",
+                    localize("gitlab.environmentVarDetected.title"),
+                    localize("gitlab.environmentVarDetected.message"),
                     project)
             }
         }
@@ -363,7 +374,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     }
                 } catch (e: Exception) {
                     logger.error("Error loading cache", e)
-                    Notifier.notifyError("GitLab Pipelines", "Failed to load cache.", project)
+                    Notifier.notifyError(
+                        pipelineWindowTitle,
+                        localize("error.failedToLoadCache"),
+                        project)
                     loadRootGroup()
                     onLoaded()
                 }
@@ -399,8 +413,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                             return@collect
 
                         Notifier.notifyInfo(
-                            "Pipeline Status Changed",
-                            "Project '${it.repositoryName}' pipeline status: ${it.oldStatus} → ${it.newStatus}",
+                            localize("gitlab.pipeline.statusChanged.title"),
+                            localize("gitlab.pipeline.statusChanged.message", it.repositoryName, it.oldStatus, it.newStatus),
                             project
                         )
                     }
@@ -410,7 +424,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     }
 
     private suspend fun loadTreeFromCache(cacheData: CacheData? = null) = withContext(Dispatchers.Main) {
-        setLoadingText("Loading from cache...")
+        setLoadingText(localize("loading.cache"))
 
         try {
             val cachedData = cacheData ?: cacheManager.loadCache()
@@ -427,7 +441,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         } catch (e: Exception) {
             logger.error("Error loading cache", e)
             setLoadingText("")
-            Notifier.notifyError("GitLab Pipelines", "Failed to load cache.", project)
+            Notifier.notifyError(
+                pipelineWindowTitle,
+                localize("error.failedToLoadCache"),
+                project)
         }
     }
 
@@ -441,31 +458,19 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
     private fun loadUiHandlers() {
         statusComboBox.addActionListener {
-            val selectedStatus = (statusComboBox.selectedItem as String).uppercase()
-            try {
-                val status = Status.valueOf(selectedStatus)
+            CoroutineScope(Dispatchers.Main).launch {
+                val selectedStatus = (statusComboBox.selectedItem as? Status)
                 statusComboBox.isEnabled = false
-                CoroutineScope(Dispatchers.Main).launch {
-                    filterTree(status, refreshNodes = false)
-                    refreshExpandedFromSet(getTreeModel().root as DefaultMutableTreeNode)
-                    refreshStatusFromMap(getTreeModel().root as DefaultMutableTreeNode)
-                    refreshNode(getTreeModel().root as DefaultMutableTreeNode, ignoreStatus = true)
-                    statusComboBox.isEnabled = true
-                }
-            } catch (e: IllegalArgumentException) {
-                if (selectedStatus != "ALL") {
-                    logger.error("Invalid status: $selectedStatus")
+                if (selectedStatus != null && selectedStatus != Status.ANY) {
+                    filterTree(selectedStatus, refreshNodes = false)
                 } else {
-                    statusComboBox.isEnabled = false
-                    CoroutineScope(Dispatchers.Main).launch {
-                        removeTreeFilter(refreshNodes = false)
-                        refreshExpandedFromSet(getTreeModel().root as DefaultMutableTreeNode)
-                        refreshStatusFromMap(getTreeModel().root as DefaultMutableTreeNode)
-                        refreshNode(getTreeModel().root as DefaultMutableTreeNode, ignoreStatus = true)
-                        statusComboBox.isEnabled = true
-                    }
+                    removeTreeFilter(refreshNodes = false)
                 }
-                return@addActionListener
+
+                refreshExpandedFromSet(getTreeModel().root as DefaultMutableTreeNode)
+                refreshStatusFromMap(getTreeModel().root as DefaultMutableTreeNode)
+                refreshNode(getTreeModel().root as DefaultMutableTreeNode, ignoreStatus = true)
+                statusComboBox.isEnabled = true
             }
         }
     }
@@ -478,7 +483,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         }
         refreshNode(getTreeModel().root as DefaultMutableTreeNode,
             saveCache = false,
-            placeholderText = "No results found.")
+            placeholderText = localize("filter.noResultsFound"))
 
         loadTreeViewHandlers()
         loadTreeModelHandlers()
@@ -572,11 +577,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     }
 
     private suspend fun loadRootGroup() {
-        setLoadingText("Loading root group...")
+        setLoadingText(localize("loading.rootGroup"))
 
         withContext(Dispatchers.IO) {
             if (isRefreshing.get()) {
-                Notifier.notifyWarning("GitLab Pipelines", "Already refreshing groups.", project)
+                Notifier.notifyWarning(
+                    pipelineWindowTitle,
+                    localize("warning.alreadyRefreshingGroups"),
+                    project)
                 return@withContext
             }
 
@@ -585,14 +593,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 withContext(Dispatchers.Main) {
                     if (group != null) {
                         populateRootGroup(group)
-                        Notifier.notifyInfo("GitLab Pipelines", "Loaded group: ${group.name}", project)
+                        Notifier.notifyInfo(pipelineWindowTitle, localize("loaded.group", group.name), project)
                     } else {
-                        Notifier.notifyError("GitLab Pipelines", "Group not found: ${settings.groupName}", project)
+                        Notifier.notifyError(pipelineWindowTitle, localize("error.groupNotFound", settings.groupName), project)
                     }
                 }
             } catch (e: Exception) {
                 logger.error("Error loading root group", e)
-                Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
+                Notifier.notifyError(pipelineWindowTitle, e.message ?: localize("error.unknown"), project)
             } finally {
                 setLoadingText("")
             }
@@ -608,7 +616,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             name = group.name,
             displayName = getGroupDisplayName(group.name)
         ))
-        root.add(DefaultMutableTreeNode("Loading..."))
+        root.add(DefaultMutableTreeNode(localize("loading")))
         setTreeRootNode(root)
     }
 
@@ -616,7 +624,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         cacheManager.clearCache()
         loadRootGroup()
         refreshRootNode()
-        Notifier.notifyInfo("GitLab Pipelines", "Cache cleared and reloaded.", project)
+        Notifier.notifyInfo(pipelineWindowTitle, localize("cache.clearedAndReloaded"), project)
     }
 
     private fun isGroupNode(node: DefaultMutableTreeNode): Boolean {
@@ -663,7 +671,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                         name = subgroup.name,
                         displayName = getGroupDisplayName(subgroup.name)
                     ))
-                    subgroupNode.add(DefaultMutableTreeNode("Loading..."))
+                    subgroupNode.add(DefaultMutableTreeNode(localize("loading")))
 
                     withContext(Dispatchers.Main) {
                         getTreeModel().insertNodeInto(subgroupNode, node, 0)
@@ -682,7 +690,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             }
         } catch (e: Exception) {
             logger.error("Error loading subgroups", e)
-            Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
+            Notifier.notifyError(pipelineWindowTitle, e.message ?: localize("error.unknown"), project)
         }
     }
 
@@ -759,7 +767,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             }
         } catch (e: Exception) {
             logger.error("Error loading repositories", e)
-            Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
+            Notifier.notifyError(pipelineWindowTitle, e.message ?: localize("error.unknown"), project)
         }
     }
 
@@ -799,7 +807,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     if (node.childCount == 0 ||
                        (node.childCount == 1 && (node.getChildAt(0) as DefaultMutableTreeNode).userObject is String)) {
                         node.removeAllChildren()
-                        node.add(DefaultMutableTreeNode("No results found."))
+                        node.add(DefaultMutableTreeNode(localize("filter.noResultsFound")))
                     }
 
                     if (!tree.isExpanded(TreePath(node.path))) {
@@ -817,7 +825,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             }
         } catch (e: Exception) {
             logger.error("Error loading subgroups/repositories", e)
-            Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
+            Notifier.notifyError(pipelineWindowTitle, e.message ?: localize("error.unknown"), project)
         }
     }
 
@@ -827,20 +835,27 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
     private fun extractGroupUrl(node: DefaultMutableTreeNode): String? {
         val nodeData = node.userObject as? TreeNodeData ?: run {
-            Notifier.notifyError("Extract Group URL", "Invalid node data.", project)
+            Notifier.notifyError(
+                localize("error.extractGroupUrl.title"),
+                localize("error.extractGroupUrl.invalidNode"),
+                project)
             return null
         }
 
         if (!nodeData.isGroup()) {
-            Notifier.notifyWarning("Extract Group URL", "Selected node is not a group.", project)
+            Notifier.notifyWarning(
+                localize("error.extractGroupUrl.title"),
+                localize("error.extractGroupUrl.selectedNodeNotAGroup"),
+                project)
             return null
         }
 
         val groupUrl = nodeData.webUrl
         if (groupUrl.isNullOrEmpty()) {
             Notifier.notifyWarning(
-                "Extract Group URL",
-                "Group '${nodeData.name}' does not have a valid URL.", project)
+                localize("error.extractGroupUrl.title"),
+                localize("error.extractGroupUrl.invalidUrl", nodeData.name ?: node.toString()),
+                project)
             return null
         }
 
@@ -848,9 +863,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     }
 
     private suspend fun refreshRootNode(saveCache: Boolean = true, notify: Boolean = false) {
-        setLoadingText("Refreshing groups...", makeBaseText = true)
+        setLoadingText(localize("refreshing.groups"), makeBaseText = true)
         if (isRefreshing.get()) {
-            Notifier.notifyWarning("GitLab Pipelines", "Already refreshing groups.", project)
+            Notifier.notifyWarning(pipelineWindowTitle, localize("warning.alreadyRefreshedGroups"), project)
             return
         }
 
@@ -863,7 +878,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             }
         } catch (e: Exception) {
             logger.error("Error refreshing groups", e)
-            Notifier.notifyError("GitLab Pipelines", e.message ?: "Unknown error", project)
+            Notifier.notifyError(pipelineWindowTitle, e.message ?: localize("error.unknown"), project)
         } finally {
             setLoadingText("", makeBaseText = true)
         }
@@ -928,7 +943,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         notify: Boolean = false,
         ignoreStatus: Boolean = false,
         force: Boolean = false,
-        placeholderText: String = "Loading..."
+        placeholderText: String = localize("loading")
     ) {
         if (!force && isRefreshing.get()) {
             logger.warn("refreshGroupNode: Already refreshing, skipping.")
@@ -946,7 +961,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
         try {
             if (isRoot && notify) {
-                setLoadingText("Refreshing group '${data?.name?:node.toString()}'...", makeBaseText = true)
+                setLoadingText(localize("refreshing.group", data?.name?:node.toString()), makeBaseText = true)
             }
 
             if (data != null) {
@@ -1025,9 +1040,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private fun updateLastRefreshLabel(notify: Boolean = false) {
         val dateFormat = java.text.SimpleDateFormat("MM/dd HH:mm")
         val lastRefreshTime = dateFormat.format(java.util.Date())
-        lastRefreshLabel.text = "Last refresh: $lastRefreshTime"
+        lastRefreshLabel.text = localize("refreshed.lastTime", lastRefreshTime)
         if (notify) {
-            Notifier.notifyInfo("GitLab Pipelines", "Groups refreshed.", project)
+            Notifier.notifyInfo(pipelineWindowTitle, localize("refreshed.groups"), project)
         }
     }
 
@@ -1091,27 +1106,30 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
         when (nodeData.type) {
             GroupType.GROUP -> {
-                popupMenu.add(JMenuItem("Refresh").apply {
+                popupMenu.add(JMenuItem(localize("gitlab.pipeline.contextMenu.refresh")).apply {
                     addActionListener {
                         CoroutineScope(Dispatchers.Main).launch {
                             refreshNode(selectedNode, notify = true, ignoreStatus = true)
                         }
                     }
                 })
-                popupMenu.add(JMenuItem("Open in Browser").apply {
+                popupMenu.add(JMenuItem(localize("gitlab.pipeline.contextMenu.openBrowser")).apply {
                     addActionListener {
                         val groupUrl = extractGroupUrl(selectedNode)
                         groupUrl?.let { url ->
                             try {
                                 java.awt.Desktop.getDesktop().browse(java.net.URI(url))
                             } catch (e: Exception) {
-                                Notifier.notifyError("Open in Browser", "Failed to open URL: $url", project)
+                                Notifier.notifyError(
+                                    localize("gitlab.pipeline.contextMenu.openBrowser"),
+                                    localize("gitlab.pipeline.contextMenu.openBrowser.failed", url),
+                                    project)
                             }
                         }
                     }
                 })
                 popupMenu.addSeparator()
-                popupMenu.add(JMenuItem("Clear Cache").apply {
+                popupMenu.add(JMenuItem(localize("cache.clear.title")).apply {
                     addActionListener {
                         CoroutineScope(Dispatchers.Main).launch {
                             clearCacheAndReload()
@@ -1120,35 +1138,41 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 })
             }
             GroupType.REPOSITORY -> {
-                popupMenu.add(JMenuItem("Refresh").apply {
+                popupMenu.add(JMenuItem(localize("gitlab.pipeline.contextMenu.refresh")).apply {
                     addActionListener {
                         CoroutineScope(Dispatchers.IO).launch {
                             refreshRepository(selectedNode)
                         }
                     }
                 })
-                popupMenu.add(JMenuItem("Open in Browser").apply {
+                popupMenu.add(JMenuItem(localize("gitlab.pipeline.contextMenu.openBrowser")).apply {
                     addActionListener {
                         nodeData.webUrl?.let { url ->
                             try {
                                 java.awt.Desktop.getDesktop().browse(java.net.URI("$url/-/pipelines/${nodeData.pipelineId}"))
                             } catch (e: Exception) {
-                                Notifier.notifyError("Open in Browser", "Failed to open URL: $url", project)
+                                Notifier.notifyError(
+                                    localize("gitlab.pipeline.contextMenu.openBrowser"),
+                                    localize("gitlab.pipeline.contextMenu.openBrowser.failed", url),
+                                    project)
                             }
                         } ?: run {
-                            Notifier.notifyWarning("Open in Browser", "No URL available for this project.", project)
+                            Notifier.notifyWarning(
+                                localize("gitlab.pipeline.contextMenu.openBrowser"),
+                                localize("gitlab.pipeline.contextMenu.openBrowser.noUrl"),
+                                project)
                         }
                     }
                 })
                 popupMenu.addSeparator()
-                popupMenu.add(JMenuItem("Retry Pipeline").apply {
+                popupMenu.add(JMenuItem(localize("gitlab.pipeline.contextMenu.retry")).apply {
                     addActionListener {
                         CoroutineScope(Dispatchers.IO).launch {
                             retryPipeline(selectedNode)
                         }
                     }
                 })
-                popupMenu.add(JMenuItem("Create Pipeline").apply {
+                popupMenu.add(JMenuItem(localize("gitlab.pipeline.contextMenu.create")).apply {
                     addActionListener {
                         CoroutineScope(Dispatchers.IO).launch {
                             createPipeline(selectedNode)
@@ -1164,14 +1188,20 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private fun retryPipeline(node: DefaultMutableTreeNode) {
         val data = node.userObject as? TreeNodeData
         if (data == null) {
-            Notifier.notifyError("Retry Pipeline", "Invalid node data.", project)
+            Notifier.notifyError(
+                localize("gitlab.pipeline.contextMenu.retry"),
+                localize("gitlab.pipeline.contextMenu.retry.invalidNode"),
+                project)
             return
         }
 
         val projectId = data.id.toInt()
         val pipeline = gitLabClient.getLatestPipeline(projectId)
         if (pipeline == null) {
-            Notifier.notifyError("Retry Pipeline", "No pipeline found to retry.", project)
+            Notifier.notifyError(
+                localize("gitlab.pipeline.contextMenu.retry"),
+                localize("gitlab.pipeline.contextMenu.retry.notFound"),
+                project)
             return
         }
 
@@ -1181,15 +1211,18 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 val retriedPipeline = gitLabClient.retryPipeline(projectId, pipeline.id)
                 withContext(Dispatchers.Main) {
                     Notifier.notifyInfo(
-                        "Retrying Pipeline",
-                        "Pipeline ${data.name}:${retriedPipeline?.id} retried successfully.", project)
+                        localize("gitlab.pipeline.contextMenu.retry"),
+                        localize("gitlab.pipeline.contextMenu.retry.success", data.name ?: "", retriedPipeline?.id.toString()),
+                        project)
                     Utils.executeAfterDelay(this, 3, Dispatchers.IO) {
                         refreshRepository(node)
                     }
                 }
             } catch (e: Exception) {
                 logger.error("Error retrying pipeline", e)
-                Notifier.notifyError("Retry Pipeline", e.message ?: "Unknown error", project)
+                Notifier.notifyError(
+                    localize("gitlab.pipeline.contextMenu.retry"),
+                    e.message ?: localize("error.unknown"), project)
             }
         }
     }
@@ -1197,7 +1230,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private fun createPipeline(node: DefaultMutableTreeNode) {
         val data = node.userObject as? TreeNodeData
         if (data == null) {
-            Notifier.notifyError("Retry Pipeline", "Invalid node data.", project)
+            Notifier.notifyError(
+                localize("gitlab.pipeline.contextMenu.create"),
+                localize("gitlab.pipeline.contextMenu.create.invalidNode"),
+                project)
             return
         }
 
@@ -1209,13 +1245,17 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 val newPipeline = gitLabClient.createPipeline(projectId, "development") // TODO prompt for ref
                 withContext(Dispatchers.Main) {
                     Notifier.notifyInfo(
-                        "Creating Pipeline",
-                        "Pipeline ${data.name}:${newPipeline?.id} created successfully.", project)
+                        localize("gitlab.pipeline.contextMenu.create"),
+                        localize("gitlab.pipeline.contextMenu.create.success"),
+                        project)
                     refreshRepository(node)
                 }
             } catch (e: Exception) {
                 logger.error("Error creating pipeline", e)
-                Notifier.notifyError("Create Pipeline", e.message ?: "Unknown error", project)
+                Notifier.notifyError(
+                    localize("gitlab.pipeline.contextMenu.create"),
+                    e.message ?: localize("error.unknown"),
+                    project)
             }
         }
     }
@@ -1235,12 +1275,18 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         saveCache: Boolean = true
     ) = withContext(Dispatchers.IO) {
         val nodeData = node.userObject as? TreeNodeData ?: run {
-            Notifier.notifyError("Refresh Project", "Invalid node data.", project)
+            Notifier.notifyError(
+                localize("gitlab.pipeline.contextMenu.refresh"),
+                localize("gitlab.pipeline.contextMenu.refresh.invalidNode"),
+                project)
             return@withContext
         }
 
         if (!nodeData.isRepository()) {
-            Notifier.notifyWarning("Refresh Repository", "Selected node is not a repository.", project)
+            Notifier.notifyWarning(
+                localize("gitlab.pipeline.contextMenu.refresh"),
+                localize("gitlab.pipeline.contextMenu.refresh.notRepo"),
+                project)
             return@withContext
         }
 
@@ -1250,7 +1296,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         }
 
         withContext(Dispatchers.Main) {
-            setLoadingText("Refreshing project '${nodeData.name}'...")
+            setLoadingText(localize("refreshing", nodeData.name ?: ""))
         }
 
         try {
@@ -1285,14 +1331,18 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     setLoadingText("")
                 }
             } else {
-                Notifier.notifyWarning("No Pipeline",
-                    "No pipeline found for project '${nodeData.name}'.", project)
+                Notifier.notifyWarning(
+                    localize("error.noPipeline.title"),
+                    localize("error.noPipeline.message"),
+                    project)
             }
         } catch (e: Exception) {
             logger.error("Error refreshing project", e)
             withContext(Dispatchers.Main) {
                 setLoadingText("")
-                Notifier.notifyError("Refresh Project", e.message ?: "Unknown error", project)
+                Notifier.notifyError(
+                    localize("gitlab.pipeline.contextMenu.refresh"),
+                    e.message ?: localize("error.unknown"), project)
             }
         }
     }
@@ -1327,6 +1377,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
             val toolWindowPanel = GitLabPipelinesToolWindow(project)
             val contentFactory = service<ContentFactory>()
             val content = contentFactory.createContent(toolWindowPanel, "", false)
+            toolWindow.title = localize("toolWindow.gitlab.pipelines")
             toolWindow.setIcon(Images.ProjectIcon)
             toolWindow.contentManager.addContent(content)
         }

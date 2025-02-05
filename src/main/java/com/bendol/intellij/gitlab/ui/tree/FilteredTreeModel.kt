@@ -1,5 +1,6 @@
 package com.bendol.intellij.gitlab.ui.tree
 
+import com.bendol.intellij.gitlab.locale.LocaleBundle.localize
 import com.bendol.intellij.gitlab.model.Filter
 import com.bendol.intellij.gitlab.model.TreeNodeData
 import java.util.concurrent.atomic.AtomicBoolean
@@ -91,7 +92,7 @@ class FilteredTreeModel(
      */
     fun filter(
         root: DefaultMutableTreeNode = this.unfilteredModel.root as DefaultMutableTreeNode,
-        noResultsMessage: String = "No results found",
+        noResultsMessage: String = localize("filter.noResultsFound"),
         reload: Boolean = false,
         filter: Filter = Filter.DEFAULT
     ): FilteredTreeModel? {
@@ -118,7 +119,7 @@ class FilteredTreeModel(
      */
     fun filter(
         root: DefaultMutableTreeNode = this.unfilteredModel.root as DefaultMutableTreeNode,
-        noResultsMessage: String = "No results found",
+        noResultsMessage: String = localize("filter.noResultsFound"),
         reload: Boolean = false,
         filter: Predicate<DefaultMutableTreeNode>? = null
     ): FilteredTreeModel? {
