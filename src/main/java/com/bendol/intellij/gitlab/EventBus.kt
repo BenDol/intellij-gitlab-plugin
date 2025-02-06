@@ -11,5 +11,5 @@ object EventBus {
         _events.emit(event)
     }
 
-    data class Event(val name: String, val data: Any? = null)
+    data class Event(val name: String, val projectId: String, val data: Any? = null)
 }

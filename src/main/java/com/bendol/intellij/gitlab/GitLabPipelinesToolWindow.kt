@@ -78,7 +78,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private var baseLoadingText = ""
     private val hiddenNodes: MutableSet<String> = ConcurrentSet()
     private val expandedNodes: MutableSet<String> = ConcurrentSet()
-    private val pipelineStatuses: MutableMap<String, Status> = ConcurrentMap()
+    private val pipelineUpdater = PipelineUpdater(project)
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -294,23 +294,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         })
     }
 
-    private fun loadTreeModelHandlers() {
-        val treeModel = getTreeModel()
-        /*treeModel.addTreeModelListener(object : javax.swing.event.TreeModelListener {
-            override fun treeNodesChanged(e: javax.swing.event.TreeModelEvent?) {
-            }
-
-            override fun treeNodesInserted(e: javax.swing.event.TreeModelEvent?) {
-            }
-
-            override fun treeNodesRemoved(e: javax.swing.event.TreeModelEvent?) {
-            }
-
-            override fun treeStructureChanged(e: javax.swing.event.TreeModelEvent?) {
-            }
-        })*/
-    }
-
     private fun initialize(retry: Boolean = false) {
         val tokenManager = GitLabTokenManager.getInstance();
         val token = tokenManager.getToken()
@@ -408,6 +391,9 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         CoroutineScope(Dispatchers.Main).launch {
             EventBus.events.collect { event -> when (event.name) {
                 "pipeline_status_changed" -> {
+                    if (event.projectId != project.basePath)
+                        return@collect
+
                     val info = event.data as? PipelineInfo
                     info?.let {
                         if (it.oldStatus == Status.UNKNOWN || it.newStatus == Status.UNKNOWN)
@@ -422,6 +408,23 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 }
             }}
         }
+    }
+
+    private fun loadTreeModelHandlers() {
+        val treeModel = getTreeModel()
+        /*treeModel.addTreeModelListener(object : javax.swing.event.TreeModelListener {
+            override fun treeNodesChanged(e: javax.swing.event.TreeModelEvent?) {
+            }
+
+            override fun treeNodesInserted(e: javax.swing.event.TreeModelEvent?) {
+            }
+
+            override fun treeNodesRemoved(e: javax.swing.event.TreeModelEvent?) {
+            }
+
+            override fun treeStructureChanged(e: javax.swing.event.TreeModelEvent?) {
+            }
+        })*/
     }
 
     private suspend fun loadTreeFromCache(cacheData: CacheData? = null) = withContext(Dispatchers.Main) {
@@ -447,14 +450,6 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 localize("error.failedToLoadCache"),
                 project)
         }
-    }
-
-    private fun getFilter(node: DefaultMutableTreeNode): Filter {
-        val data = node.userObject as? TreeNodeData
-        if (data != null && data.isGroup()) {
-            return data.filter
-        }
-        return Filter.DEFAULT
     }
 
     private fun loadUiHandlers() {
@@ -489,6 +484,14 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         loadTreeViewHandlers()
         loadTreeModelHandlers()
         loadUiHandlers()
+    }
+
+    private fun getFilter(node: DefaultMutableTreeNode): Filter {
+        val data = node.userObject as? TreeNodeData
+        if (data != null && data.isGroup()) {
+            return data.filter
+        }
+        return Filter.DEFAULT
     }
 
     private fun getTreeModel(): DefaultTreeModel {
@@ -550,10 +553,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         }
     }
 
-    private fun refreshStatusesFromNode(node: DefaultMutableTreeNode) {
+    private suspend fun refreshStatusesFromNode(node: DefaultMutableTreeNode) {
         val data = node.userObject as? TreeNodeData
         if (data != null && data.isRepository()) {
-            pipelineStatuses[data.id] = data.status
+            pipelineUpdater.updateStatus(data)
         }
 
         for (i in 0..<node.childCount) {
@@ -565,7 +568,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private fun refreshStatusFromMap(node: DefaultMutableTreeNode) {
         val data = node.userObject as? TreeNodeData
         if (data != null && data.isRepository()) {
-            val status = pipelineStatuses[data.id]
+            val status = pipelineUpdater.getStatus(data.id)
             if (status != null) {
                 data.status = status
             }
@@ -725,19 +728,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 }
                 val repoId = repository.id.toString()
                 val status = pipeline.status
-                val oldStatus = pipelineStatuses[repoId]
-                pipelineStatuses[repoId] = status
 
-                if (oldStatus != null && oldStatus != status) {
-                    EventBus.publish(EventBus.Event(
-                        "pipeline_status_changed", PipelineInfo(
-                            projectId = repoId,
-                            repositoryName = repository.name,
-                            oldStatus = oldStatus,
-                            newStatus = pipeline.status
-                        )
-                    ))
-                }
+                pipelineUpdater.updateStatus(repository, pipeline)
 
                 val repoNode = DefaultMutableTreeNode(TreeNodeData(
                     id = repoId,
@@ -861,15 +853,21 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         saveCache: Boolean = true,
         notify: Boolean = false
     ): Boolean {
-        setLoadingText(localize("refreshing.groups"), makeBaseText = true)
         if (isRefreshing.get()) {
             Notifier.notifyWarning(pipelineWindowTitle, localize("warning.alreadyRefreshedGroups"), project)
             return false
         }
 
+        setLoadingText(localize("refreshing.groups"), makeBaseText = true)
+
         if (fromCacheIfUpdated && cacheManager.isUpdatedRecently()) {
             try {
                 loadTreeFromCache()
+                refreshNode(getTreeModel().root as DefaultMutableTreeNode,
+                    saveCache = true,
+                    placeholderText = localize("filter.noResultsFound"))
+
+                setLoadingText("", makeBaseText = true)
                 return true
             } catch (e: Exception) {
                 logger.error("Error loading cache", e)
@@ -1435,26 +1433,15 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         try {
             val pipeline = gitLabClient.getLatestPipeline(nodeData.id.toInt())
             if (pipeline != null) {
-                val oldStatus = pipelineStatuses[nodeData.id] ?: nodeData.status
                 nodeData.status = pipeline.status
                 nodeData.pipelineId = pipeline.id
-                pipelineStatuses[nodeData.id] = pipeline.status
 
                 withContext(Dispatchers.Main) {
                     // Update the node's display text
                     node.userObject = nodeData
                     getTreeModel().nodeChanged(node)
 
-                    if (oldStatus != pipeline.status) {
-                        EventBus.publish(EventBus.Event(
-                            "pipeline_status_changed", PipelineInfo(
-                                projectId = nodeData.id,
-                                repositoryName = nodeData.name ?: "",
-                                oldStatus = oldStatus,
-                                newStatus = pipeline.status
-                            )
-                        ))
-                    }
+                    pipelineUpdater.updateStatus(nodeData, pipeline)
 
                     if (saveCache) {
                         cacheManager.saveCache(getTreeModel().root as DefaultMutableTreeNode)
