@@ -41,6 +41,7 @@ import java.awt.Dimension
 import java.awt.Image
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
+import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.Box
 import javax.swing.BoxLayout
@@ -300,7 +301,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         if (token.isNullOrEmpty()) {
             if (!retry) {
                 Notifier.notifyWarning(
-                    title = localize("gitlab.tokenMissing.title"),
+                    title   = localize("gitlab.tokenMissing.title"),
                     message = localize("gitlab.tokenMissing.message"),
                     project = project,
                     actions = mapOf(Pair(localize("gitlab.tokenMissing.actionSettings")) {
@@ -380,9 +381,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
         CoroutineScope(Dispatchers.Default).launch {
             while (isActive) {
                 delay(settings.refreshRateSeconds * 1000L)
-                withContext(Dispatchers.IO) {
-                    refreshRootNode(fromCacheIfUpdated = true)
-                }
+                refreshRootNode(fromCacheIfUpdated = true)
             }
         }
     }
@@ -401,7 +400,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
 
                         Notifier.notifyInfo(
                             localize("gitlab.pipeline.statusChanged.title"),
-                            localize("gitlab.pipeline.statusChanged.message", it.repositoryName, it.oldStatus, it.newStatus),
+                            localize("gitlab.pipeline.statusChanged.message",
+                                it.repositoryName,
+                                it.oldStatus,
+                                it.newStatus),
                             project
                         )
                     }
@@ -436,6 +438,10 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 setTreeRootNode(cachedData.treeData, reload = false)
                 refreshExpandedFromNode(getTreeModel().root as DefaultMutableTreeNode)
                 refreshStatusesFromNode(getTreeModel().root as DefaultMutableTreeNode)
+
+                if (cachedData.timestamp != null) {
+                    setLastRefreshLabel(Date(cachedData.timestamp))
+                }
 
                 setLoadingText("")
             } else {
@@ -556,6 +562,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     private suspend fun refreshStatusesFromNode(node: DefaultMutableTreeNode) {
         val data = node.userObject as? TreeNodeData
         if (data != null && data.isRepository()) {
+            logger.warn("refreshStatusesFromNode: Refreshing status for ${data.name}")
             pipelineUpdater.updateStatus(data)
         }
 
@@ -729,6 +736,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 val repoId = repository.id.toString()
                 val status = pipeline.status
 
+                logger.warn("loadRepositories: Refreshing status for ${repository.name}")
                 pipelineUpdater.updateStatus(repository, pipeline)
 
                 val repoNode = DefaultMutableTreeNode(TreeNodeData(
@@ -973,6 +981,8 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                 setLoadingText(localize("refreshing.group", data?.name?:node.toString()), makeBaseText = true)
             }
 
+            var apiRefresh = false
+
             if (data != null) {
                 if (node.childCount < 1 && data.isGroup()) {
                     data.status = Status.UNKNOWN
@@ -1001,6 +1011,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                                 withContext(Dispatchers.Main) {
                                     node.removeAllChildren()
                                 }
+                                apiRefresh = true
                                 loadSubgroupsAndRepositories(node, group.id, saveCache = saveCache)
                             }
                         }
@@ -1011,6 +1022,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                             }
                         }
                         else if (data.isRepository() && (ignoreStatus || data.status == Status.UNKNOWN)) {
+                            apiRefresh = true
                             refreshRepository(node, saveCache)
                         }
                     }
@@ -1032,7 +1044,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     placeholderText = placeholderText)
             }
 
-            if (isRoot) {
+            if (isRoot && apiRefresh) {
                 withContext(Dispatchers.Main) {
                     updateLastRefreshLabel(notify)
                 }
@@ -1047,12 +1059,16 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
     }
 
     private fun updateLastRefreshLabel(notify: Boolean = false) {
-        val dateFormat = java.text.SimpleDateFormat("MM/dd HH:mm")
-        val lastRefreshTime = dateFormat.format(java.util.Date())
-        lastRefreshLabel.text = localize("refreshed.lastTime", lastRefreshTime)
+        setLastRefreshLabel(Date())
         if (notify) {
             Notifier.notifyInfo(pipelineWindowTitle, localize("refreshed.groups"), project)
         }
+    }
+
+    private fun setLastRefreshLabel(date: Date) {
+        val dateFormat = java.text.SimpleDateFormat("MM/dd HH:mm")
+        val lastRefreshTime = dateFormat.format(date)
+        lastRefreshLabel.text = localize("refreshed.lastTime", lastRefreshTime)
     }
 
     private fun removeRepositories(node: DefaultMutableTreeNode) {
@@ -1441,6 +1457,7 @@ class GitLabPipelinesToolWindow(private val project: Project) : SimpleToolWindow
                     node.userObject = nodeData
                     getTreeModel().nodeChanged(node)
 
+                    logger.warn("refreshRepository: Refreshing status for ${nodeData.name}")
                     pipelineUpdater.updateStatus(nodeData, pipeline)
 
                     if (saveCache) {

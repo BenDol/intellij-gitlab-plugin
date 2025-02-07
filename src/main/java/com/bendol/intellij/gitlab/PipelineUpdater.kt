@@ -5,12 +5,17 @@ import com.bendol.intellij.gitlab.model.PipelineInfo
 import com.bendol.intellij.gitlab.model.Repository
 import com.bendol.intellij.gitlab.model.Status
 import com.bendol.intellij.gitlab.model.TreeNodeData
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.*
 
 class PipelineUpdater(private val project: Project) {
+
+    private val logger = Logger.getInstance(PipelineUpdater::class.java)
 
     private val statuses = Collections.synchronizedMap(mutableMapOf<String, Status>())
     private val mutex = Mutex()
@@ -19,17 +24,21 @@ class PipelineUpdater(private val project: Project) {
         return statuses[id]
     }
 
-    suspend fun updateStatus(data: TreeNodeData) {
+    suspend fun updateStatus(data: TreeNodeData) = withContext(Dispatchers.IO) {
         updateStatus(data, Pipeline(data.pipelineId ?: -1, data.status))
     }
 
-    suspend fun updateStatus(data: TreeNodeData, pipeline: Pipeline) {
+    suspend fun updateStatus(data: TreeNodeData, pipeline: Pipeline) = withContext(Dispatchers.IO) {
         updateStatus(
             Repository(data.id.toInt(), data.name ?: "", data.webUrl ?: ""),
             pipeline)
     }
 
-    suspend fun updateStatus(repository: Repository, pipeline: Pipeline, publishEvent: Boolean = true) {
+    suspend fun updateStatus(
+        repository: Repository,
+        pipeline: Pipeline,
+        publishEvent: Boolean = true
+    ) = withContext(Dispatchers.IO) {
         val repoId = repository.id.toString()
         val newStatus = pipeline.status
 
@@ -45,6 +54,8 @@ class PipelineUpdater(private val project: Project) {
         }
 
         if (shouldPublish) {
+            logger.warn("Pipeline status changed for ${repository.name}: $oldStatus -> $newStatus", Exception())
+
             EventBus.publish(EventBus.Event("pipeline_status_changed",
                 project.basePath!!,
                 PipelineInfo(
